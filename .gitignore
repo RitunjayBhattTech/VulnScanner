@@ -1,0 +1,22 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.env
+backend/.env
+env/
+.venv/
+venv/
+
+# Docker
+*.log
+docker-compose.override.yml
+
+# Node
+node_modules/
+/dist
+/build
+
+# Ollama
+.ollama/
