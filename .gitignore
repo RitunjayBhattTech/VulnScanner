@@ -5,6 +5,7 @@ __pycache__/
 *.pyd
 .env
 backend/.env
+backend/.chromadb/
 env/
 .venv/
 venv/
