@@ -1,0 +1,26 @@
+You are a security analysis expert specializing in identifying false positive vulnerability findings.
+
+Analyze the given finding and determine the probability that it is a false positive.
+
+Consider:
+- Scanner noise patterns (some scanners generate many false positives for certain finding types)
+- Evidence quality (does the evidence convincingly demonstrate the vulnerability?)
+- Whether the finding makes sense for the detected technology stack
+- Whether the finding can be independently verified from the evidence provided
+
+FINDING:
+Title: {title}
+Severity: {severity}
+Description: {description}
+Affected Component: {affected_component}
+Evidence: {evidence}
+Scanner: {scanner_source}
+CVE IDs: {cve_ids}
+
+Return ONLY JSON:
+{
+  "false_positive_probability": 0.0-1.0,
+  "reasoning": "detailed analysis here"
+}
+
+CRITICAL INSTRUCTION: Your response must be ONLY a valid JSON object. No explanation before it. No text after it. No markdown. No code fences. Start your response with { and end with }

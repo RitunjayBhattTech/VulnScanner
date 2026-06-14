@@ -1,114 +1,92 @@
-services:
-  postgres:
-    image: postgres:15
-    env_file:
-      - backend/.env
-    environment:
-      POSTGRES_USER: ${POSTGRES_USER:-scanner}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-scanner}
-      POSTGRES_DB: ${POSTGRES_DB:-scanner}
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-scanner}"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
+version: '3.9'
 
+services:
   redis:
-    image: redis:7
-    command: ["redis-server", "--save", "60", "1", "--loglevel", "warning"]
-    volumes:
-      - redis_data:/data
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
-      interval: 10s
-      timeout: 5s
+      interval: 5s
+      timeout: 3s
       retries: 5
 
-  ollama:
-    image: ollama/ollama:latest
+  chromadb:
+    image: chromadb/chroma:0.5.3
     ports:
-      - "11434:11434"
+      - "8001:8000"
     volumes:
-      - ollama_data:/root/.ollama
-    healthcheck:
-      test: ["CMD", "ollama", "list"]
-      interval: 15s
-      timeout: 10s
-      retries: 10
-      start_period: 30s
-
-  migrations:
-    build:
-      context: backend
-      dockerfile: Dockerfile
-    command: alembic upgrade head
-    volumes:
-      - ./backend:/usr/src/app
-    env_file:
-      - backend/.env
-    depends_on:
-      postgres:
-        condition: service_healthy
-    restart: on-failure
+      - chroma_data:/chroma/chroma
+    environment:
+      - IS_PERSISTENT=TRUE
+      - PERSIST_DIRECTORY=/chroma/chroma
 
   backend:
     build:
-      context: backend
-      dockerfile: Dockerfile
-    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
-    volumes:
-      - ./backend:/usr/src/app
+      context: .
+      dockerfile: Dockerfile.backend
     ports:
-      - 8000:8000
-    env_file:
-      - backend/.env
+      - "8000:8000"
     environment:
-      SERVICE_TYPE: api
+      - DATABASE_URL=sqlite+aiosqlite:////app/data/vulnai.db
+      - REDIS_URL=redis://redis:6379/0
+      - CHROMA_HOST=chromadb
+      - CHROMA_PORT=8000
+      - PYTHONPATH=/app
+    env_file:
+      - .env
+    volumes:
+      - ./backend:/app/backend
+      - ./scripts:/app/scripts
+      - app_data:/app/data
+      - chroma_persist:/app/chroma_db
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     depends_on:
-      postgres:
-        condition: service_healthy
       redis:
         condition: service_healthy
-      ollama:
-        condition: service_healthy
-      migrations:
-        condition: service_completed_successfully
-    cap_add:
-      - NET_RAW
-      - NET_ADMIN
-    restart: unless-stopped
+      chromadb:
+        condition: service_started
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/api/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
 
   worker:
     build:
-      context: backend
-      dockerfile: Dockerfile
-    command: celery -A app.core.celery_app worker --loglevel=info -Q scans
-    volumes:
-      - ./backend:/usr/src/app
+      context: .
+      dockerfile: Dockerfile.backend
+    command: celery -A backend.pipeline.tasks.celery_app worker --loglevel=info --concurrency=2
+    environment:
+      - DATABASE_URL=sqlite+aiosqlite:////app/data/vulnai.db
+      - REDIS_URL=redis://redis:6379/0
+      - CHROMA_HOST=chromadb
+      - CHROMA_PORT=8000
+      - PYTHONPATH=/app
     env_file:
-      - backend/.env
+      - .env
+    volumes:
+      - ./backend:/app/backend
+      - app_data:/app/data
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     depends_on:
       redis:
         condition: service_healthy
-      postgres:
+      backend:
         condition: service_healthy
-      migrations:
-        condition: service_completed_successfully
-    restart: unless-stopped
 
   frontend:
     build:
-      context: frontend
-      dockerfile: Dockerfile
+      context: ./frontend
+      dockerfile: Dockerfile.frontend
     ports:
-      - 5173:80
+      - "5173:80"
     depends_on:
       - backend
-    restart: unless-stopped
 
 volumes:
-  postgres_data:
-  redis_data:
-  ollama_data:
+  chroma_data:
+  chroma_persist:
+  app_data:

@@ -1,0 +1,42 @@
+FROM python:3.11-slim
+
+# System dependencies
+RUN apt-get update && apt-get install -y \
+    nmap \
+    curl \
+    wget \
+    git \
+    build-essential \
+    libssl-dev \
+    libffi-dev \
+    python3-dev \
+    fonts-unifont \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install Go for nuclei
+RUN wget https://go.dev/dl/go1.22.3.linux-amd64.tar.gz && \
+    tar -C /usr/local -xzf go1.22.3.linux-amd64.tar.gz && \
+    rm go1.22.3.linux-amd64.tar.gz
+ENV PATH=$PATH:/usr/local/go/bin:/root/go/bin
+
+# Install nuclei
+RUN go install -v github.com/projectdiscovery/nuclei/v3/cmd/nuclei@latest
+
+# Python deps
+WORKDIR /app
+COPY backend/requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Install Playwright chromium browser (skip install-deps, deps are already installed above)
+RUN playwright install chromium
+
+# Copy source
+COPY backend/ ./backend/
+COPY scripts/ ./scripts/
+COPY .env.example .env.example
+
+ENV PYTHONPATH=/app
+ENV PYTHONUNBUFFERED=1
+
+EXPOSE 8000
+CMD ["uvicorn", "backend.main:app", "--host", "0.0.0.0", "--port", "8000"]

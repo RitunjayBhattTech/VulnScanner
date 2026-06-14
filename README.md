@@ -1,191 +1,233 @@
-# AI-Augmented Vulnerability Scanner
+# 🔬 VulnAI Scanner
 
-A self-hosted security scanning platform that combines **Nmap** with an **AI reasoning layer** (Ollama/Mistral 7B) to interpret results, chain findings into attack paths, and generate actionable intelligence.
+**AI-Powered Vulnerability Assessment Platform**
 
-## Architecture
+VulnAI Scanner wraps traditional security scanning primitives (nmap, Semgrep, Nuclei, web crawlers) with a Claude LLM reasoning layer for intelligent triage, false-positive filtering, remediation advice, and natural-language reporting.
 
-```
-┌─────────────────────────────────────────────────────────────┐
-│                        Frontend                             │
-│                  React + Recharts (Port 80)                  │
-│         Dashboard ─ New Scan ─ Scan Detail                  │
-│         Findings Table ─ Attack Chain Viz                   │
-└──────────┬──────────────────────────────────────────────────┘
-           │ /api/* proxy via nginx
-           ▼
-┌─────────────────────────────────────────────────────────────┐
-│                     FastAPI Backend (Port 8000)              │
-│  POST /api/v1/scans/   → Create & launch scan              │
-│  GET  /api/v1/scans/   → List scans with stats             │
-│  GET  /api/v1/scans/:id → Scan detail                     │
-│  GET  /api/v1/scans/:id/findings → Findings w/ AI data    │
-│  GET  /api/v1/scans/:id/chains  → Attack chains           │
-└──────┬──────────────────────────────────────────────────────┘
-       │
-       ├── Celery Worker ─── async scan orchestration
-       │     ├── NmapScanner ─── XML parse → findings
-       │     ├── RagService  ─── CVE knowledge base (ChromaDB)
-       │     └── OllamaClient ── AI analysis → CVSS + chains
-       │
-       ├── PostgreSQL ─── scans, findings, attack_chains, audit_logs
-       └── Redis ──────── Celery broker + result backend
-```
+## Key Differentiators
 
-## Data Flow: From Target to Actionable Intelligence
+| Feature | VulnAI | Traditional Scanners |
+|---------|--------|---------------------|
+| **LLM Triage** | Contextualises findings by network topology, not just CVSS | Raw CVSS scores only |
+| **RAG Pipeline** | Queries live CVE/CWE knowledge base per finding | No context enrichment |
+| **AI Remediation** | Actual code diffs and config patches | Generic text advice |
+| **Delta Diffing** | Shows new/fixed/regressed since last scan | No historical comparison |
+| **False Positive Filter** | AI classifies FP probability per finding | Manual review required |
 
 ```
-Step 1: User creates scan via API or Dashboard
-        POST /api/v1/scans/ { target_scope, profile, authorized }
-        └── Scope validated (CIDR check)
-        └── Scan record created (status: "queued")
-        └── Celery task dispatched
-
-Step 2: Celery worker picks up the task
-        └── Status → "running"
-        └── Audit log: scan_started
-
-Step 3: Nmap scans the target
-        └── nmap -oX - -sV {profile_flags} {target_scope}
-        └── XML parsed → structured findings [{host, port, service, version}]
-        └── Status → findings extracted
-
-Step 4: RAG service retrieves CVE context
-        └── Matches services against built-in CVE knowledge base
-        └── 17+ real CVEs (OpenSSH regreSSHion, HTTP/2 Rapid Reset, etc.)
-        └── Returns: [{host, port, service, cve_contexts: [{cve, cvss, description}]}]
-
-Step 5: Ollama (Mistral 7B) performs AI analysis
-        └── Prompt: "You are a senior penetration tester..."
-        └── Findings + CVE context sent to LLM
-        └── AI returns structured JSON:
-
-        {
-          "findings": [{
-            "host": "192.168.1.1",
-            "port": 22,
-            "cvss_score": 8.1,
-            "severity": "high",
-            "false_positive_reasoning": "...",
-            "exploitation_notes": "...",
-            "attack_chain_id": 1
-          }],
-          "attack_chains": [{
-            "chain_id": 1,
-            "description": "OpenSSH RCE → container escape",
-            "hosts": ["192.168.1.1", "192.168.1.2"],
-            "severity": "critical",
-            "likelihood": "medium",
-            "mitre_technique_id": "T1190"
-          }]
-        }
-
-Step 6: Results persisted to PostgreSQL
-        └── Findings stored with: severity, cvss_score, fp_reasoning, exploitation_notes
-        └── Attack chains stored with: description, steps, severity, likelihood, MITRE ID
-        └── Status → "completed"
-        └── Audit log: scan_completed
-
-Step 7: User views results in Dashboard
-        └── Scan Detail page: findings table with CVSS bars, FP reasoning
-        └── Attack Chains tab: visualized multi-step exploitation paths
-        └── Auto-refresh while scan is running
+┌─────────────────────────────────────────────────────┐
+│                    Scan Pipeline                      │
+│                                                       │
+│  Pre-flight → Discovery → Enumeration → Detection    │
+│     (Auth)     (nmap)     (Crawler)   (Nuclei,       │
+│                                        Headers, SSL, │
+│                                        Semgrep)      │
+│                                                       │
+│  Detection → AI Processing → Delta → Summary → Done  │
+│              (FP Filter,     (Diff)   (LLM)          │
+│               Triage,                                 │
+│               Remediation)                            │
+└─────────────────────────────────────────────────────┘
 ```
 
-## Quick Start
+## Prerequisites
+
+- **Python 3.11+**
+- **Node.js 20+**
+- **Docker & Docker Compose** (for containerized setup)
+- **nmap** (for port scanning)
+- **nuclei** (for vulnerability template scanning)
+- **semgrep** (for SAST scanning)
+
+## Quick Start (Docker Compose)
 
 ```bash
-# 1. Start all services
-docker compose up --build -d
+# Clone the repository
+git clone https://github.com/yourusername/vulnai-scanner.git
+cd vulnai-scanner
 
-# 2. Wait for migrations and Ollama model download (~2-5 minutes)
+# Copy environment config
+cp .env.example .env
+# Edit .env and add your ANTHROPIC_API_KEY
 
-# 3. Open the dashboard
-#    http://localhost:5173
+# Start all services
+docker-compose up -d
 
-# 4. Or use the API directly
-#    http://localhost:8000/docs
-#    http://localhost:8000
+# Seed the knowledge base
+docker-compose exec backend python scripts/seed_knowledge_base.py
+
+# Access the application
+open http://localhost:5173
 ```
 
-## Create a Scan (via PowerShell)
+## Manual Setup
 
-```powershell
-$headers = @{"Content-Type" = "application/json"}
-$body = @{
-    target_scope = "127.0.0.1/32"
-    profile = "normal"
-    authorized = $true
-} | ConvertTo-Json
+### Backend
 
-$response = Invoke-RestMethod -Uri "http://localhost:8000/api/v1/scans/" `
-    -Method POST `
-    -Headers $headers `
-    -Body $body
+```bash
+# Create virtual environment
+python -m venv venv
+source venv/bin/activate  # On Windows: venv\Scripts\activate
+
+# Install dependencies
+pip install -r backend/requirements.txt
+
+# Install Playwright browsers
+playwright install chromium
+
+# Copy and configure environment
+cp .env.example .env
+# Edit .env with your API keys
+
+# Seed knowledge base
+python scripts/seed_knowledge_base.py
+
+# Start backend
+uvicorn backend.main:app --host 0.0.0.0 --port 8000 --reload
+
+# In a separate terminal, start Celery worker
+celery -A backend.pipeline.tasks worker --loglevel=info -Q scans
 ```
 
-Then visit `http://localhost:5173` to see results in the dashboard.
+### Frontend
 
-## API Reference
+```bash
+cd frontend
+npm install
+npm run dev
+```
+
+### Development Script
+
+```bash
+chmod +x scripts/run_dev.sh
+./scripts/run_dev.sh
+```
+
+## Environment Variables
+
+| Variable | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `ANTHROPIC_API_KEY` | Yes | - | Anthropic Claude API key |
+| `SECRET_KEY` | Yes | - | Secret for signing audit tokens |
+| `DATABASE_URL` | No | `sqlite+aiosqlite:///./vulnai.db` | Database connection string |
+| `REDIS_URL` | No | `redis://localhost:6379/0` | Redis for Celery |
+| `NVD_API_KEY` | No | - | NVD API key (higher rate limits) |
+| `CHROMA_PERSIST_DIR` | No | `./chroma_db` | ChromaDB persistence directory |
+| `MAX_SCAN_RATE` | No | `10` | Max outbound requests/second |
+| `ENABLE_POC_GENERATION` | No | `false` | Enable AI PoC generation |
+| `CORS_ORIGINS` | No | `["http://localhost:5173"]` | Allowed CORS origins |
+
+## API Endpoints
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| POST | `/api/v1/scans/` | Launch a new scan |
-| GET | `/api/v1/scans/` | List all scans (with finding/chain counts) |
-| GET | `/api/v1/scans/{id}` | Get scan detail |
-| GET | `/api/v1/scans/{id}/findings` | List findings with AI analysis |
-| GET | `/api/v1/scans/{id}/chains` | List attack chains |
-| GET | `/` | Service health check |
+| `GET` | `/api/health` | Health check |
+| `POST` | `/api/scans` | Create and queue a scan |
+| `GET` | `/api/scans` | List all scans |
+| `GET` | `/api/scans/{id}` | Get scan details |
+| `GET` | `/api/scans/{id}/status` | Poll scan status |
+| `DELETE` | `/api/scans/{id}/cancel` | Cancel a running scan |
+| `GET` | `/api/findings?scan_id={id}` | List findings for a scan |
+| `GET` | `/api/findings/{id}` | Get finding details |
+| `PATCH` | `/api/findings/{id}` | Update finding (analyst workflow) |
+| `GET` | `/api/reports/{scan_id}/pdf` | Download PDF report |
+
+## Security Features
+
+### Authorisation Gate
+Every scan **requires** explicit confirmation that the user has written authorisation. This is enforced at the API level (not just the UI). Without `authorisation_confirmed=true`, the pipeline will not execute.
+
+### Scope Enforcement
+The scope validator runs before every outbound request. It checks:
+- **IP targets**: Falls within declared CIDR ranges
+- **Domain targets**: Matches or is a subdomain of declared domains
+- Raises `ScopeViolationError` for any out-of-scope target
+
+### Audit Logging
+Every scan action writes an immutable audit log entry:
+- Who initiated the scan
+- When the scan was created/started/completed/failed
+- Declared scope
+- Authorisation confirmation token (SHA256 hash)
+
+### Rate Limiting
+All outbound requests are rate-limited via a token bucket algorithm. Default: 10 requests/second. Nmap runs in polite mode (`-T2`).
+
+### Credential Security
+- No API keys hardcoded in source code
+- All secrets loaded from environment variables
+- `.env` file is in `.gitignore`
+
+### PoC Generation
+The PoC generation feature is **disabled by default**. Enable it only with `ENABLE_POC_GENERATION=true` and only in authorised testing environments.
 
 ## Project Structure
 
 ```
+vulnai-scanner/
 ├── backend/
-│   ├── app/
-│   │   ├── api/api_v1/endpoints/   ← REST endpoints
-│   │   ├── core/                    ← Config, Celery app
-│   │   ├── db/                      ← SQLAlchemy models, session
-│   │   ├── services/                ← NmapScanner, RagService, OllamaClient
-│   │   ├── tasks/                   ← Celery scan task
-│   │   ├── utils/                   ← Scope enforcement
-│   │   ├── crud.py                  ← Database queries
-│   │   ├── schemas.py               ← Pydantic models
-│   │   └── main.py                  ← FastAPI app
-│   ├── alembic/                     ← Database migrations
-│   ├── Dockerfile
-│   └── requirements.txt
+│   ├── main.py                 # FastAPI entry point
+│   ├── config.py              # Settings via pydantic-settings
+│   ├── database.py            # SQLAlchemy async engine
+│   ├── models/                # ORM models (Scan, Finding, AuditLog, User)
+│   ├── schemas/               # Pydantic schemas
+│   ├── api/routes/            # API endpoints
+│   ├── core/                  # Security, rate limiter, exceptions
+│   ├── scanners/              # nmap, Nuclei, Semgrep, etc.
+│   ├── ai/                    # Claude client, RAG, triage, etc.
+│   ├── knowledge/             # ChromaDB vector store, ingesters
+│   ├── pipeline/              # Orchestrator, delta engine, Celery tasks
+│   ├── reporting/             # PDF report generator
+│   └── tests/                 # pytest test suite
 ├── frontend/
 │   ├── src/
-│   │   ├── components/              ← React components
-│   │   │   ├── ScanDashboard.jsx    ← Stats + scan list
-│   │   │   ├── NewScan.jsx          ← Scan creation form
-│   │   │   ├── ScanDetail.jsx       ← Scan detail with tabs
-│   │   │   ├── FindingsTable.jsx    ← AI-enriched findings
-│   │   │   └── ChainsView.jsx       ← Attack chain visualization
-│   │   ├── api.js                   ← API client
-│   │   ├── App.jsx                  ← Router + layout
-│   │   └── styles.css               ← Dark theme
-│   ├── Dockerfile                   ← Multi-stage build + nginx
-│   ├── nginx.conf                   ← API proxy + SPA routing
-│   └── package.json
-└── docker-compose.yml               ← Full stack orchestration
+│   │   ├── components/        # React components
+│   │   ├── pages/             # Route pages
+│   │   ├── hooks/             # React Query hooks
+│   │   ├── types/             # TypeScript definitions
+│   │   └── api/               # API client
+│   └── ...
+├── .github/workflows/         # CI/CD pipeline
+├── scripts/                   # Utility scripts
+├── docker-compose.yml         # Docker Compose configuration
+├── Dockerfile.backend         # Backend Dockerfile
+├── Dockerfile.frontend        # Frontend Dockerfile
+└── README.md
 ```
 
-## Key Design Decisions
+## Testing
 
-- **AI output is structured JSON, not keyword search** — the Ollama prompt instructs strict JSON output with CVSS scores, false positive reasoning, exploitation notes, and attack chains with MITRE ATT&CK IDs
-- **CVE context via RAG** — built-in knowledge base of 17+ real CVEs matched by service/port, with ChromaDB support for semantic search when available
-- **Attack chain persistence** — chains are stored in their own DB table with resolved finding references, severity, likelihood, and MITRE technique IDs
-- **Scope enforcement** — CIDR-based subnet validation prevents scanning outside authorized ranges
-- **Authorization guard** — scans require explicit `authorized: true` flag and are rejected without it
-- **Full audit trail** — every scan action is logged (started, completed, failed, rejected) with timestamps
-- **Async architecture** — async DB sessions throughout, Celery worker for long-running scans
+```bash
+cd backend
+pytest -v
 
-## Next Steps (Future Work)
+# Run specific test file
+pytest tests/test_scope_validator.py -v
+pytest tests/test_delta_engine.py -v
+```
 
-- [ ] Add JWT authentication and user management
-- [ ] WebSocket real-time scan progress updates
-- [ ] PDF/Markdown report generation (weasyprint + jinja2 in requirements)
-- [ ] Nuclei scanner integration for CVE-specific probing
-- [ ] False positive feedback loop (learning from user feedback)
-- [ ] NVD/ChromaDB ingestion pipeline for up-to-date CVE data
-- [ ] Service dependency graph visualization
+## 📜 Legal Disclaimer
+
+> **This tool is for authorised security testing only.**
+>
+> The authors are not responsible for misuse of this software. Always obtain **written permission** from the system owner before scanning any system you do not own.
+>
+> Unauthorised scanning may violate:
+> - Computer Fraud and Abuse Act (CFAA) in the US
+> - Computer Misuse Act in the UK
+> - Equivalent laws in other jurisdictions
+>
+> By using this software, you agree to use it only for lawful purposes and only on systems you have explicit authorisation to test.
+
+## Contributing
+
+1. Fork the repository
+2. Create a feature branch (`git checkout -b feature/amazing-feature`)
+3. Commit changes (`git commit -m 'Add amazing feature'`)
+4. Push to branch (`git push origin feature/amazing-feature`)
+5. Open a Pull Request
+
+## License
+
+MIT License - See LICENSE file for details.

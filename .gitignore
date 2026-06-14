@@ -1,23 +1,43 @@
 # Python
 __pycache__/
 *.py[cod]
-*.pyo
-*.pyd
-.env
-backend/.env
-backend/.chromadb/
-env/
-.venv/
-venv/
+*$py.class
+*.so
+*.egg-info/
+dist/
+build/
+*.egg
+.eggs/
 
-# Docker
-*.log
-docker-compose.override.yml
+# Virtual environments
+venv/
+.venv/
+env/
+
+# Database
+*.db
+*.sqlite3
+
+# ChromaDB
+chroma_db/
+
+# Environment
+.env
+.env.local
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
 
 # Node
 node_modules/
-/dist
-/build
+frontend/dist/
 
-# Ollama
-.ollama/
+# Docker
+.docker/
+
+# OS
+.DS_Store
+Thumbs.db

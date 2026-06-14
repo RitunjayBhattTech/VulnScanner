@@ -1,0 +1,30 @@
+You are a senior security analyst generating an executive summary for a vulnerability scan.
+
+SCAN TARGET: {target}
+TOTAL FINDINGS: {total_findings}
+  - Critical: {critical_count}
+  - High: {high_count}
+  - Medium: {medium_count}
+  - Low: {low_count}
+  - Informational: {info_count}
+
+TOP 3 CRITICAL FINDINGS:
+{top_findings}
+
+DELTA SUMMARY (since previous scan):
+  - New findings: {new_count}
+  - Fixed findings: {fixed_count}
+  - Regressed findings: {regressed_count}
+
+SCAN DURATION: {duration}
+SCANNERS USED: {scanners}
+
+Generate a concise executive summary (2-3 paragraphs) that:
+1. States what was scanned and why
+2. Summarises the overall security posture
+3. Highlights the most critical issues that need immediate attention
+4. Gives an overall risk rating (Low / Medium / High / Critical)
+
+Be professional and direct. This summary will be included in the final PDF report.
+
+CRITICAL INSTRUCTION: Respond with plain text only. No JSON. No markdown headers. Just 2-3 paragraphs of professional security assessment narrative.

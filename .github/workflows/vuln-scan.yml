@@ -1,0 +1,120 @@
+name: VulnAI CI/CD Security Scan
+
+on:
+  pull_request:
+    branches: [main]
+
+jobs:
+  security-scan:
+    runs-on: ubuntu-latest
+    
+    services:
+      redis:
+        image: redis:7
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # Fetch all history for delta comparison
+      
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y nmap
+          curl -sSL https://github.com/projectdiscovery/nuclei/releases/latest/download/nuclei_linux_amd64.zip -o nuclei.zip
+          sudo unzip nuclei.zip -d /usr/local/bin/
+          rm nuclei.zip
+      
+      - name: Install Python dependencies
+        run: |
+          pip install -r backend/requirements.txt
+          pip install semgrep
+          playwright install chromium
+      
+      - name: Seed knowledge base
+        run: |
+          python scripts/seed_knowledge_base.py
+        env:
+          CHROMA_PERSIST_DIR: ./chroma_db
+          NVD_API_KEY: ${{ secrets.NVD_API_KEY }}
+      
+      - name: Start backend
+        run: |
+          cp .env.example .env
+          uvicorn backend.main:app --host 0.0.0.0 --port 8000 &
+          sleep 5
+          curl -f http://localhost:8000/api/health || exit 1
+        env:
+          DATABASE_URL: sqlite+aiosqlite:///./vulnai.db
+          REDIS_URL: redis://localhost:6379/0
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          SECRET_KEY: ${{ secrets.SECRET_KEY }}
+          CHROMA_PERSIST_DIR: ./chroma_db
+      
+      - name: Run security scan against test target
+        id: scan
+        run: |
+          python -c "
+          import asyncio, httpx, json
+          async def run_scan():
+              async with httpx.AsyncClient() as client:
+                  # Create scan
+                  resp = await client.post('http://localhost:8000/api/scans', json={
+                      'target': 'http://testphp.vulnweb.com',
+                      'scope': ['testphp.vulnweb.com', '44.228.249.3/32'],
+                      'scan_types': ['port', 'web', 'nuclei', 'header', 'ssl'],
+                      'authorisation_confirmed': True,
+                  })
+                  scan = resp.json()
+                  print(f'Scan created: {json.dumps(scan, indent=2)}')
+                  
+                  # Wait for completion
+                  for _ in range(60):
+                      resp = await client.get(f'http://localhost:8000/api/scans/{scan[\"id\"]}/status')
+                      status = resp.json()
+                      if status['status'] in ('completed', 'failed'):
+                          break
+                      await asyncio.sleep(5)
+                  
+                  # Get findings
+                  resp = await client.get(f'http://localhost:8000/api/findings', params={'scan_id': scan['id']})
+                  findings = resp.json()
+                  
+                  critical = [f for f in findings if f['severity'] == 'critical']
+                  high = [f for f in findings if f['severity'] == 'high']
+                  
+                  print(f'Scan completed with {len(findings)} findings')
+                  print(f'Critical: {len(critical)}, High: {len(high)}')
+                  
+                  # Fail on new critical/high findings
+                  if len(critical) + len(high) > 0:
+                      print(f'FAIL: Found {len(critical)} critical and {len(high)} high findings')
+                      exit(1)
+                  
+          asyncio.run(run_scan())
+          "
+      
+      - name: Post PR Comment
+        if: always()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const scanResult = process.env.SCAN_RESULT;
+            await github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: `## 🔬 VulnAI Scan Results\n\nScan completed against test target.\n\n**Status:** ${scanResult || 'Complete'}\n\n*This is an automated security scan.*`
+            });
