@@ -33,6 +33,8 @@ services:
       - CHROMA_HOST=chromadb
       - CHROMA_PORT=8000
       - PYTHONPATH=/app
+      - ANONYMIZED_TELEMETRY=False
+      - CHROMA_TELEMETRY=False
     env_file:
       - .env
     volumes:

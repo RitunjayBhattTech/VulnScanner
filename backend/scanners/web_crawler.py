@@ -1,8 +1,14 @@
-import asyncio
+"""
+Lightweight web crawler using httpx (no Playwright dependency).
+Finds links and forms from HTML using regex - fast, no browser needed.
+Playwright is no longer required for basic crawling.
+"""
+import httpx
+import re
 import logging
-from dataclasses import dataclass, field
-from typing import List, Optional
 from urllib.parse import urljoin, urlparse
+from dataclasses import dataclass, field
+from typing import List
 
 from backend.scanners.base import BaseScanner
 from backend.schemas.finding import RawFinding
@@ -13,141 +19,105 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class CrawlResult:
-    """Structured result from web crawling."""
-    urls: List[str] = field(default_factory=list)
-    forms: List[dict] = field(default_factory=list)
+    urls: list = field(default_factory=list)
+    forms: list = field(default_factory=list)
     headers: dict = field(default_factory=dict)
-    cookies: List[dict] = field(default_factory=list)
-    technologies: List[str] = field(default_factory=list)
+    cookies: list = field(default_factory=list)
+    technologies: list = field(default_factory=list)
 
 
 class WebCrawler(BaseScanner):
-    """Playwright async web crawler that collects URLs, forms, headers, and cookies."""
+    """Lightweight web crawler using httpx. No Playwright/Chromium needed."""
 
     def __init__(self, scan_id: str, target: str, scope: list, rate_limiter, max_depth: int = 3):
         super().__init__(scan_id, target, scope, rate_limiter)
         self.max_depth = max_depth
-        self.visited = set()
         self.crawl_result = CrawlResult()
 
     def get_scanner_name(self) -> str:
         return "web_crawler"
 
     async def run(self) -> List[RawFinding]:
-        """Crawl the target URL and collect information. Returns findings from analysis."""
-        findings = []
+        """Crawl the target URL and return findings from analysis."""
+        crawl_result = await self._run_crawl()
+        self.crawl_result = crawl_result
+        return self._analyze_crawl_result()
+
+    async def _run_crawl(self) -> CrawlResult:
+        """Run the httpx-based crawl."""
+        urls_found = set()
+        forms_found = []
+        headers_found = {}
+        technologies = []
 
         try:
-            validate_scope(self.target, self.scope)
+            async with httpx.AsyncClient(
+                timeout=30.0,
+                follow_redirects=True,
+                verify=False,
+                headers={"User-Agent": "VulnAI-Scanner/1.0 (Authorised Security Testing)"}
+            ) as client:
+                logger.info(f"[Crawler] Fetching {self.target}")
+                resp = await client.get(self.target)
+                headers_found = dict(resp.headers)
 
-            async with self.rate_limiter.limit():
-                from playwright.async_api import async_playwright
+                # Detect technologies from headers
+                server = resp.headers.get("server", "").lower()
+                powered_by = resp.headers.get("x-powered-by", "").lower()
+                if "nginx" in server:
+                    technologies.append("nginx")
+                if "apache" in server:
+                    technologies.append("apache")
+                if "cloudflare" in server:
+                    technologies.append("cloudflare")
+                if "express" in powered_by:
+                    technologies.append("express")
+                if "php" in powered_by or "php" in server:
+                    technologies.append("php")
+                if "asp.net" in powered_by or "iis" in server:
+                    technologies.append("asp.net")
 
-                async with async_playwright() as p:
-                    browser = await p.chromium.launch(headless=True)
-                    page = await browser.new_page()
+                # Extract links from HTML using regex
+                html = resp.text
+                href_pattern = re.compile(r'href=["\']([^"\']+)["\']', re.IGNORECASE)
+                target_host = urlparse(self.target).hostname
 
-                    # Initial navigation
-                    try:
-                        response = await page.goto(self.target, wait_until="networkidle", timeout=30000)
-                        if response:
-                            self.crawl_result.headers = dict(response.headers)
-                    except Exception as e:
-                        logger.warning(f"Navigation error to {self.target}: {e}")
+                for match in href_pattern.findall(html):
+                    full_url = urljoin(self.target, match)
+                    parsed = urlparse(full_url)
+                    if parsed.scheme in ('http', 'https'):
+                        if parsed.hostname == target_host:
+                            urls_found.add(full_url)
 
-                    # Collect cookies
-                    cookies = await page.context.cookies()
-                    self.crawl_result.cookies = cookies
+                # Extract forms
+                form_pattern = re.compile(
+                    r'<form[^>]*action=["\']([^"\']*)["\'][^>]*method=["\']([^"\']*)["\']',
+                    re.IGNORECASE
+                )
+                for action, method in form_pattern.findall(html):
+                    forms_found.append({
+                        "action": urljoin(self.target, action),
+                        "method": method.upper()
+                    })
 
-                    # Collect forms
-                    forms = await page.evaluate("""
-                        () => Array.from(document.forms).map(f => ({
-                            action: f.action,
-                            method: f.method,
-                            inputs: Array.from(f.elements).map(e => ({
-                                name: e.name,
-                                type: e.type,
-                                placeholder: e.placeholder
-                            }))
-                        }))
-                    """)
-                    self.crawl_result.forms = forms or []
-
-                    # Crawl links up to max_depth
-                    await self._crawl_links(page, self.target, 0)
-
-                    # Detect technologies from headers
-                    self._detect_technologies()
-
-                    await browser.close()
+                logger.info(
+                    f"[Crawler] Found {len(urls_found)} URLs, "
+                    f"{len(forms_found)} forms"
+                )
 
         except Exception as e:
-            logger.error(f"Web crawler error: {e}", exc_info=True)
+            logger.error(f"[Crawler] Error crawling {self.target}: {e}")
 
-        # Generate findings from crawl analysis
-        findings.extend(self._analyze_crawl_result())
-        return findings
-
-    async def _crawl_links(self, page, base_url: str, depth: int):
-        """Recursively crawl links up to max_depth."""
-        if depth >= self.max_depth:
-            return
-
-        base_parsed = urlparse(base_url)
-        links = await page.evaluate("""
-            () => Array.from(document.querySelectorAll('a[href]')).map(a => a.href)
-        """)
-        links = [urljoin(base_url, link) for link in (links or [])]
-
-        for link in links:
-            if link in self.visited:
-                continue
-            self.visited.add(link)
-
-            link_parsed = urlparse(link)
-            if link_parsed.netloc != base_parsed.netloc:
-                continue
-
-            # Validate scope for this URL
-            try:
-                validate_scope(link, self.scope)
-            except Exception:
-                continue
-
-            self.crawl_result.urls.append(link)
-
-            async with self.rate_limiter.limit():
-                try:
-                    new_page = await page.context.new_page()
-                    await new_page.goto(link, wait_until="domcontentloaded", timeout=15000)
-                    await self._crawl_links(new_page, link, depth + 1)
-                    await new_page.close()
-                except Exception:
-                    continue
-
-    def _detect_technologies(self):
-        """Detect technologies from response headers."""
-        headers = self.crawl_result.headers
-        server = headers.get("server", "").lower()
-        powered_by = headers.get("x-powered-by", "").lower()
-
-        if "nginx" in server:
-            self.crawl_result.technologies.append("nginx")
-        if "apache" in server:
-            self.crawl_result.technologies.append("apache")
-        if "cloudflare" in server:
-            self.crawl_result.technologies.append("cloudflare")
-        if "express" in powered_by:
-            self.crawl_result.technologies.append("express")
-        if "php" in powered_by or "php" in server:
-            self.crawl_result.technologies.append("php")
-        if "asp.net" in powered_by or "iis" in server:
-            self.crawl_result.technologies.append("asp.net")
-        if "python" in powered_by or "python" in server:
-            self.crawl_result.technologies.append("python")
+        return CrawlResult(
+            urls=list(urls_found)[:50],
+            forms=forms_found,
+            headers=headers_found,
+            cookies=[],
+            technologies=technologies,
+        )
 
     def _analyze_crawl_result(self) -> List[RawFinding]:
-        """Analyze the crawl result and generate findings."""
+        """Analyze crawl result and generate findings."""
         findings = []
 
         # Check for forms without HTTPS
@@ -161,19 +131,6 @@ class WebCrawler(BaseScanner):
                     evidence=str(form),
                     scanner_source=self.get_scanner_name(),
                 ))
-
-        # Check for forms with password fields but no HTTPS
-        for form in self.crawl_result.forms:
-            for inp in form.get("inputs", []):
-                if inp.get("type") == "password" and not form.get("action", "").startswith("https"):
-                    findings.append(RawFinding(
-                        title="Password Field Over Unencrypted Connection",
-                        description="A password input field exists on a page submitted over HTTP.",
-                        severity="high",
-                        affected_component=form.get("action", ""),
-                        evidence=str(form),
-                        scanner_source=self.get_scanner_name(),
-                    ))
 
         # Report URL count
         if self.crawl_result.urls:

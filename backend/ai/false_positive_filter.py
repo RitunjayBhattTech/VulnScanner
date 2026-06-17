@@ -54,12 +54,9 @@ Return ONLY JSON:
             reasoning = result.get("reasoning", "AI analysis completed")
             return min(max(prob, 0.0), 1.0), reasoning
 
-        except (json.JSONDecodeError, ValueError, TypeError) as e:
-            logger.warning(f"Failed to parse FP filter response: {e}")
-            return 0.1, f"Error parsing AI response: {str(e)}"
         except Exception as e:
-            logger.error(f"False positive filter error: {e}")
-            return 0.1, f"AI filter error: {str(e)}"
+            logger.warning(f"[FalsePositiveFilter] LLM call failed, using default: {e}")
+            return 0.1, f"AI assessment unavailable. Defaulting to 0.1 probability. Error: {str(e)[:100]}"
 
 
 # Global instance

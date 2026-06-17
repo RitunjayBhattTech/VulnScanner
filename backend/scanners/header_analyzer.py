@@ -1,5 +1,6 @@
 import logging
-from typing import List, Dict
+from typing import List
+from urllib.parse import urlparse
 
 import httpx
 
@@ -9,50 +10,42 @@ from backend.core.security import validate_scope
 
 logger = logging.getLogger(__name__)
 
-# OWASP recommended security headers
 SECURITY_HEADERS = {
-    "Strict-Transport-Security": {
-        "description": "HTTP Strict Transport Security enforces HTTPS connections",
-        "recommended": True,
-        "severity_missing": "high",
-        "severity_misconfigured": "medium",
+    'strict-transport-security': {
+        'name': 'Missing HSTS Header',
+        'desc': 'Strict-Transport-Security header is missing. Browsers may allow HTTP connections.',
+        'severity': 'medium',
+        'recommendation': 'Add: Strict-Transport-Security: max-age=31536000; includeSubDomains'
     },
-    "Content-Security-Policy": {
-        "description": "Content Security Policy prevents XSS and data injection attacks",
-        "recommended": True,
-        "severity_missing": "high",
-        "severity_misconfigured": "medium",
+    'content-security-policy': {
+        'name': 'Missing Content-Security-Policy',
+        'desc': 'No CSP header found. The site is vulnerable to XSS attacks.',
+        'severity': 'medium',
+        'recommendation': "Add: Content-Security-Policy: default-src 'self'"
     },
-    "X-Frame-Options": {
-        "description": "X-Frame-Options prevents clickjacking attacks",
-        "recommended": True,
-        "severity_missing": "medium",
-        "severity_misconfigured": "low",
+    'x-frame-options': {
+        'name': 'Missing X-Frame-Options',
+        'desc': 'X-Frame-Options header is missing. Site may be vulnerable to clickjacking.',
+        'severity': 'low',
+        'recommendation': 'Add: X-Frame-Options: DENY'
     },
-    "X-Content-Type-Options": {
-        "description": "X-Content-Type-Options prevents MIME type sniffing",
-        "recommended": True,
-        "severity_missing": "medium",
-        "severity_misconfigured": "low",
+    'x-content-type-options': {
+        'name': 'Missing X-Content-Type-Options',
+        'desc': 'X-Content-Type-Options header missing. MIME sniffing attacks possible.',
+        'severity': 'low',
+        'recommendation': 'Add: X-Content-Type-Options: nosniff'
     },
-    "Referrer-Policy": {
-        "description": "Referrer-Policy controls how much referrer information is sent",
-        "recommended": True,
-        "severity_missing": "low",
-        "severity_misconfigured": "low",
+    'referrer-policy': {
+        'name': 'Missing Referrer-Policy',
+        'desc': 'Referrer-Policy header is missing.',
+        'severity': 'informational',
+        'recommendation': 'Add: Referrer-Policy: strict-origin-when-cross-origin'
     },
-    "Permissions-Policy": {
-        "description": "Permissions-Policy controls which browser features can be used",
-        "recommended": True,
-        "severity_missing": "low",
-        "severity_misconfigured": "low",
-    },
-}
-
-DEPRECATED_HEADERS = {
-    "X-XSS-Protection": {
-        "description": "X-XSS-Protection is deprecated and should be removed",
-        "severity_present": "informational",
+    'permissions-policy': {
+        'name': 'Missing Permissions-Policy',
+        'desc': 'Permissions-Policy header is missing.',
+        'severity': 'informational',
+        'recommendation': 'Add: Permissions-Policy: geolocation=(), camera=(), microphone=()'
     },
 }
 
@@ -66,69 +59,65 @@ class HeaderAnalyzer(BaseScanner):
     async def run(self) -> List[RawFinding]:
         findings = []
 
+        # Ensure URL has scheme
+        target = self.target
+        if not target.startswith(('http://', 'https://')):
+            target = 'http://' + target
+
         try:
             validate_scope(self.target, self.scope)
+        except Exception as e:
+            logger.warning(f"[HeaderAnalyzer] Scope validation: {e}")
+            return findings
 
-            async with self.rate_limiter.limit():
-                async with httpx.AsyncClient(timeout=30.0, follow_redirects=True) as client:
-                    response = await client.get(self.target)
-                    headers = dict(response.headers)
+        try:
+            async with httpx.AsyncClient(
+                timeout=30.0,
+                follow_redirects=True,
+                verify=False,
+                headers={'User-Agent': 'VulnAI-Scanner/1.0 (Authorised Security Testing)'}
+            ) as client:
+                logger.info(f"[HeaderAnalyzer] Checking headers for {target}")
+                response = await client.get(target)
+                response_headers = {k.lower(): v for k, v in response.headers.items()}
+                logger.info(f"[HeaderAnalyzer] Got {len(response_headers)} headers, status {response.status_code}")
 
-                    # Check for recommended headers
-                    for header, config in SECURITY_HEADERS.items():
-                        if header not in headers:
-                            findings.append(RawFinding(
-                                title=f"Missing Security Header: {header}",
-                                description=f"{config['description']}. This header is missing from the response.",
-                                severity=config["severity_missing"],
-                                affected_component=self.target,
-                                evidence=f"Header '{header}' not found in response headers",
-                                scanner_source=self.get_scanner_name(),
-                            ))
-                        else:
-                            # Basic validation of header values
-                            value = headers[header]
-                            if header == "Strict-Transport-Security" and "max-age=0" in value:
-                                findings.append(RawFinding(
-                                    title=f"Misconfigured Security Header: {header}",
-                                    description=f"HSTS is set with max-age=0, effectively disabling it.",
-                                    severity=config["severity_misconfigured"],
-                                    affected_component=self.target,
-                                    evidence=f"{header}: {value}",
-                                    scanner_source=self.get_scanner_name(),
-                                ))
-
-                    # Check for deprecated headers
-                    for header, config in DEPRECATED_HEADERS.items():
-                        if header in headers:
-                            findings.append(RawFinding(
-                                title=f"Deprecated Header Present: {header}",
-                                description=config["description"],
-                                severity=config["severity_present"],
-                                affected_component=self.target,
-                                evidence=f"{header}: {headers[header]}",
-                                scanner_source=self.get_scanner_name(),
-                            ))
-
-                    if not findings:
+                # Check each security header
+                for header_key, config in SECURITY_HEADERS.items():
+                    if header_key not in response_headers:
                         findings.append(RawFinding(
-                            title="Security Headers Check Passed",
-                            description="All OWASP-recommended security headers are present and properly configured.",
-                            severity="informational",
-                            affected_component=self.target,
+                            title=config['name'],
+                            description=config['desc'],
+                            severity=config['severity'],
+                            affected_component=target,
+                            evidence=f"Header '{header_key}' not present in response.\nPresent headers: {', '.join(sorted(response_headers.keys())[:15])}",
                             scanner_source=self.get_scanner_name(),
                         ))
 
+                # Check for server header (information disclosure)
+                if 'server' in response_headers:
+                    server = response_headers['server']
+                    findings.append(RawFinding(
+                        title='Server Version Disclosed',
+                        description=f'The Server header reveals software version: {server}',
+                        severity='informational',
+                        affected_component=target,
+                        evidence=f'Server: {server}',
+                        scanner_source=self.get_scanner_name(),
+                    ))
+
+                logger.info(f"[HeaderAnalyzer] Found {len(findings)} header issues")
+
         except httpx.RequestError as e:
-            logger.error(f"Header analyzer HTTP error for {self.target}: {e}")
+            logger.error(f"[HeaderAnalyzer] HTTP error for {target}: {e}")
             findings.append(RawFinding(
                 title="Header Analyzer Error",
-                description=f"Could not connect to {self.target}: {str(e)}",
+                description=f"Could not connect to {target}: {str(e)}",
                 severity="informational",
                 affected_component=self.target,
                 scanner_source=self.get_scanner_name(),
             ))
         except Exception as e:
-            logger.error(f"Header analyzer error: {e}", exc_info=True)
+            logger.error(f"[HeaderAnalyzer] Error: {e}", exc_info=True)
 
         return findings

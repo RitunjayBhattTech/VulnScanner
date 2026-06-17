@@ -4,6 +4,7 @@ from datetime import datetime
 from typing import List
 
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select
 
 from backend.config import settings
 from backend.models.scan import Scan, Finding, ScanStatus
@@ -56,10 +57,13 @@ class ScanOrchestrator:
             # Step 5: Delta Analysis
             await self._delta_analysis(scan, processed_findings)
 
-            # Step 6: Executive Summary
+            # Step 6: Count findings by severity and update scan record
+            await self._update_scan_counts(scan)
+
+            # Step 7: Executive Summary
             await self._generate_summary(scan)
 
-            # Step 7: Finalise
+            # Step 8: Finalise
             await self._finalise(scan, None)
 
         except AuthorisationRequiredError as e:
@@ -68,6 +72,46 @@ class ScanOrchestrator:
         except Exception as e:
             logger.error(f"Scan pipeline failed for {scan.id}: {e}", exc_info=True)
             await self._finalise(scan, f"Pipeline error: {str(e)}")
+
+    async def _update_scan_counts(self, scan: Scan):
+        """Count findings by severity and update scan record."""
+        logger.info(f"[Scan {scan.id}] Updating severity counts")
+
+        try:
+            # Fetch all findings from DB for this scan
+            from backend.models.scan import Finding as FindingModel
+            result = await self.db.execute(
+                select(FindingModel).where(FindingModel.scan_id == scan.id)
+            )
+            all_findings = list(result.scalars().all())
+
+            severity_counts = {
+                'critical': 0, 'high': 0, 'medium': 0,
+                'low': 0, 'informational': 0
+            }
+
+            for f in all_findings:
+                sev = f.severity
+                if hasattr(sev, 'value'):
+                    sev = sev.value
+                sev = str(sev).lower()
+                if sev in severity_counts:
+                    severity_counts[sev] += 1
+
+            # Update scan with counts
+            scan.total_findings = len(all_findings)
+            scan.critical_count = severity_counts['critical']
+            scan.high_count = severity_counts['high']
+            scan.medium_count = severity_counts['medium']
+            scan.low_count = severity_counts['low']
+            scan.info_count = severity_counts['informational']
+
+            await self.db.commit()
+            logger.info(f"[Scan {scan.id}] Counts saved: {len(all_findings)} total findings")
+
+        except Exception as e:
+            logger.error(f"[Scan {scan.id}] Failed to update severity counts: {e}")
+            # Don't crash the scan on count failure
 
     async def _preflight(self, scan: Scan) -> None:
         """Pre-flight checks: authorisation and audit log."""
@@ -120,7 +164,8 @@ class ScanOrchestrator:
         findings = await scanner.run()
         if findings:
             await self._save_raw_findings(scan, findings)
-            self.tech_stack.extend(scanner.crawl_result.technologies)
+            if hasattr(scanner, 'crawl_result') and hasattr(scanner.crawl_result, 'technologies'):
+                self.tech_stack.extend(scanner.crawl_result.technologies)
 
     async def _detection(self, scan: Scan) -> List[RawFinding]:
         """Detection phase: run vulnerability scanners in parallel."""
@@ -134,17 +179,17 @@ class ScanOrchestrator:
             from backend.scanners.nuclei_runner import NucleiRunner
             tasks.append(NucleiRunner(scan.id, scan.target, scan.scope, global_rate_limiter).run())
 
-        # Header analyzer (always runs if "header" in scan_types, or if web crawler was run)
+        # Header analyzer
         if "header" in scan.scan_types:
             from backend.scanners.header_analyzer import HeaderAnalyzer
             tasks.append(HeaderAnalyzer(scan.id, scan.target, scan.scope, global_rate_limiter).run())
 
-        # SSL checker (always runs if "ssl" in scan_types)
+        # SSL checker
         if "ssl" in scan.scan_types:
             from backend.scanners.ssl_checker import SSLChecker
             tasks.append(SSLChecker(scan.id, scan.target, scan.scope, global_rate_limiter).run())
 
-        # Semgrep (if requested - only runs on local directories)
+        # Semgrep
         if "semgrep" in scan.scan_types:
             from backend.scanners.semgrep_runner import SemgrepRunner
             tasks.append(SemgrepRunner(scan.id, scan.target, scan.scope, global_rate_limiter).run())
@@ -157,6 +202,25 @@ class ScanOrchestrator:
                     logger.error(f"Scanner error: {result}")
                 elif isinstance(result, list):
                     all_findings.extend(result)
+
+        # Normalize: convert dicts to RawFinding if any scanner returned plain dicts
+        normalized = []
+        for f in all_findings:
+            if isinstance(f, dict):
+                normalized.append(RawFinding(
+                    title=f.get('title', 'Unknown'),
+                    description=f.get('description', ''),
+                    severity=f.get('severity', 'informational'),
+                    cvss_score=f.get('cvss_score'),
+                    affected_component=f.get('affected_component', ''),
+                    evidence=f.get('evidence', ''),
+                    scanner_source=f.get('scanner_source', 'unknown'),
+                    cve_ids=f.get('cve_ids', []),
+                    cwe_ids=f.get('cwe_ids', []),
+                ))
+            else:
+                normalized.append(f)
+        all_findings = normalized
 
         # Deduplicate by title + affected_component
         seen = set()
@@ -175,7 +239,7 @@ class ScanOrchestrator:
         logger.info(f"[Scan {scan.id}] Starting AI processing ({len(raw_findings)} findings)")
 
         processed = []
-        semaphore = asyncio.Semaphore(5)  # Max 5 concurrent LLM calls
+        semaphore = asyncio.Semaphore(5)
 
         scan_context = {
             "exposure": "internet-facing" if "http" in scan.target else "unknown",
@@ -186,7 +250,6 @@ class ScanOrchestrator:
         async def process_finding(raw: RawFinding):
             async with semaphore:
                 try:
-                    # 1. False positive filter
                     fp_prob, fp_reasoning = await false_positive_filter.assess(raw)
 
                     finding = Finding(
@@ -205,7 +268,6 @@ class ScanOrchestrator:
                         created_at=datetime.utcnow(),
                     )
 
-                    # 2. If not likely false positive, run triage and remediation
                     if fp_prob < 0.8:
                         triaged = await triage_agent.triage_finding(raw, scan_context)
                         if triaged:
@@ -219,7 +281,6 @@ class ScanOrchestrator:
 
                 except Exception as e:
                     logger.error(f"AI processing error for finding '{raw.title}': {e}")
-                    # Return a basic finding even on AI failure
                     return Finding(
                         scan_id=scan.id,
                         title=raw.title,
@@ -234,11 +295,9 @@ class ScanOrchestrator:
                         created_at=datetime.utcnow(),
                     )
 
-        # Process findings in parallel with concurrency limit
         tasks = [process_finding(rf) for rf in raw_findings]
         processed = await asyncio.gather(*tasks)
 
-        # Save to DB
         self.db.add_all(processed)
         await self.db.commit()
 
@@ -253,7 +312,6 @@ class ScanOrchestrator:
 
         logger.info(f"[Scan {scan.id}] Running delta analysis against {scan.previous_scan_id}")
 
-        # Fetch previous findings
         from backend.models.scan import Finding as FindingModel
         from sqlalchemy import select
 
@@ -266,10 +324,8 @@ class ScanOrchestrator:
             logger.info(f"[Scan {scan.id}] No previous findings found for delta analysis")
             return
 
-        # Run delta comparison
         delta_findings = self.delta_engine.compare(current_findings, previous_findings)
 
-        # Update delta status in current findings
         for df in delta_findings:
             if df.delta_status:
                 for cf in current_findings:
@@ -283,7 +339,7 @@ class ScanOrchestrator:
     async def _generate_summary(self, scan: Scan):
         """Generate AI executive summary."""
         try:
-            # Count findings by severity
+            # Count findings by severity using Python (not DB queries that need greenlet)
             critical = [f for f in scan.findings if f.severity == "critical"]
             high = [f for f in scan.findings if f.severity == "high"]
             medium = [f for f in scan.findings if f.severity == "medium"]
@@ -305,7 +361,6 @@ class ScanOrchestrator:
                 duration = datetime.utcnow() - self.scan_start_time
                 duration_min = round(duration.total_seconds() / 60, 1)
 
-            # Read the report summary prompt
             prompt_path = "backend/ai/prompts/report_summary_prompt.txt"
             try:
                 with open(prompt_path) as pf:
@@ -337,15 +392,7 @@ class ScanOrchestrator:
 
             if response:
                 scan.summary = response
-
-            # Update severity counts
-            scan.total_findings = len(scan.findings)
-            scan.critical_count = len(critical)
-            scan.high_count = len(high)
-            scan.medium_count = len(medium)
-            scan.low_count = len(low)
-            scan.info_count = len(info)
-            await self.db.commit()
+                await self.db.commit()
 
         except Exception as e:
             logger.error(f"Summary generation error: {e}")
@@ -383,9 +430,9 @@ class ScanOrchestrator:
             await write_audit_log(
                 self.db, scan.id, "scan_completed", "system",
                 {
-                    "total_findings": scan.total_findings,
-                    "critical_count": scan.critical_count,
-                    "high_count": scan.high_count,
+                    "total_findings": scan.total_findings or 0,
+                    "critical_count": scan.critical_count or 0,
+                    "high_count": scan.high_count or 0,
                 }
             )
 

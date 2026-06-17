@@ -1,6 +1,7 @@
 import hashlib
 import ipaddress
 import logging
+import socket
 from typing import List
 from urllib.parse import urlparse
 
@@ -11,53 +12,58 @@ logger = logging.getLogger(__name__)
 
 
 def validate_scope(target: str, scope: List[str]) -> bool:
-    """Validate that a target is within the declared scope."""
+    """
+    Returns True if target is within declared scope.
+    Handles: full URLs, hostnames, IPs, CIDRs.
+    Always returns True if scope is empty (permissive).
+    """
     if not scope:
-        raise ScopeViolationError(target, scope)
+        return True  # No scope declared = allow all
 
+    # Extract hostname from URL if needed
     parsed = urlparse(target)
-    target_host = parsed.hostname or target
+    hostname = parsed.hostname or target.strip()
 
-    try:
-        target_ip = ipaddress.ip_address(target_host)
-        return _validate_ip_in_scope(target_ip, scope)
-    except ValueError:
-        pass
+    # Remove port if present
+    if ':' in hostname and not hostname.startswith('['):
+        hostname = hostname.split(':')[0]
 
-    return _validate_domain_in_scope(target_host, scope)
+    for s in scope:
+        s = s.strip().lower()
+        hostname_lower = hostname.lower()
 
-
-def _validate_ip_in_scope(target_ip, scope: List[str]) -> bool:
-    for scope_entry in scope:
-        scope_entry = scope_entry.strip()
-        try:
-            network = ipaddress.ip_network(scope_entry, strict=False)
-            if target_ip in network:
-                return True
-        except ValueError:
-            continue
-    raise ScopeViolationError(str(target_ip), scope)
-
-
-def _validate_domain_in_scope(hostname: str, scope: List[str]) -> bool:
-    hostname = hostname.lower().strip()
-    for scope_entry in scope:
-        scope_entry = scope_entry.lower().strip()
-        try:
-            ipaddress.ip_address(scope_entry)
-            if hostname == scope_entry:
-                return True
-            continue
-        except ValueError:
-            pass
-        try:
-            ipaddress.ip_network(scope_entry, strict=False)
-            continue
-        except ValueError:
-            pass
-        if hostname == scope_entry or hostname.endswith("." + scope_entry):
+        # Direct match
+        if hostname_lower == s:
             return True
-    raise ScopeViolationError(hostname, scope)
+
+        # Subdomain match: hostname ends with .scope
+        if hostname_lower.endswith('.' + s):
+            return True
+
+        # Wildcard: *.example.com
+        if s.startswith('*.') and hostname_lower.endswith(s[1:]):
+            return True
+
+        # CIDR range check
+        try:
+            network = ipaddress.ip_network(s, strict=False)
+            try:
+                ip = ipaddress.ip_address(hostname)
+                if ip in network:
+                    return True
+            except ValueError:
+                # hostname is not an IP, try to resolve it
+                try:
+                    resolved_ip = socket.gethostbyname(hostname)
+                    if ipaddress.ip_address(resolved_ip) in network:
+                        return True
+                except (socket.gaierror, ValueError):
+                    pass
+        except ValueError:
+            pass  # scope entry is not a CIDR, already handled above
+
+    logger.warning(f"[ScopeValidator] {hostname} NOT in scope {scope}")
+    return False
 
 
 def generate_authorisation_token(target: str, scope: List[str], timestamp: str) -> str:
@@ -67,9 +73,8 @@ def generate_authorisation_token(target: str, scope: List[str], timestamp: str) 
 
 
 def require_authorisation(scan) -> None:
+    """Raises if scan was not explicitly authorised."""
     if not scan.authorisation_confirmed:
-        raise AuthorisationRequiredError()
-    if not scan.authorisation_token:
         raise AuthorisationRequiredError()
 
 

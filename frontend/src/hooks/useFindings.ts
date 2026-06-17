@@ -1,32 +1,30 @@
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { listFindings, getFinding, updateFinding } from '../api/client';
+import { useState, useEffect, useCallback } from 'react'
+import { findingApi } from '../api/client'
+import type { Finding } from '../types'
 
-export function useFindings(scanId: string | undefined, params?: {
-  severity?: string;
-  delta_status?: string;
-}) {
-  return useQuery({
-    queryKey: ['findings', scanId, params],
-    queryFn: () => listFindings(scanId!, params),
-    enabled: !!scanId,
-  });
-}
+export function useFindings(scanId: string | undefined) {
+  const [findings, setFindings] = useState<Finding[]>([])
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
 
-export function useFinding(id: string | undefined) {
-  return useQuery({
-    queryKey: ['finding', id],
-    queryFn: () => getFinding(id!),
-    enabled: !!id,
-  });
-}
+  const fetchFindings = useCallback(async () => {
+    if (!scanId) { setLoading(false); return }
+    try {
+      const result = await findingApi.list(scanId)
+      setFindings(Array.isArray(result) ? result : [])
+      setError(null)
+    } catch (e) {
+      console.error('Failed to fetch findings:', e)
+      setError('Failed to load findings')
+      setFindings([])
+    } finally {
+      setLoading(false)
+    }
+  }, [scanId])
 
-export function useUpdateFinding() {
-  const queryClient = useQueryClient();
-  return useMutation({
-    mutationFn: ({ id, data }: { id: string; data: { is_false_positive?: boolean; severity?: string } }) =>
-      updateFinding(id, data),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['findings'] });
-    },
-  });
+  useEffect(() => {
+    fetchFindings()
+  }, [fetchFindings])
+
+  return { findings, loading, error, refetch: fetchFindings }
 }

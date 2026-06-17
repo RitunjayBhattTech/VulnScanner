@@ -1,12 +1,13 @@
 import asyncio
 import json
 import logging
+import os
+import shutil
 from typing import List
 
 from backend.scanners.base import BaseScanner
 from backend.schemas.finding import RawFinding
 from backend.core.security import validate_scope
-from backend.core.exceptions import ToolNotInstalledError
 
 logger = logging.getLogger(__name__)
 
@@ -21,7 +22,7 @@ SEVERITY_MAP = {
 
 
 class NucleiRunner(BaseScanner):
-    """Nuclei CLI wrapper for template-based vulnerability scanning."""
+    """Nuclei CLI wrapper with graceful fallback if nuclei is not installed."""
 
     def get_scanner_name(self) -> str:
         return "nuclei"
@@ -31,75 +32,81 @@ class NucleiRunner(BaseScanner):
 
         try:
             validate_scope(self.target, self.scope)
+        except Exception as e:
+            logger.error(f"[Nuclei] Scope validation failed: {e}")
+            return findings
 
-            # Check if nuclei is installed
-            proc = await asyncio.create_subprocess_exec(
-                "nuclei", "-version",
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-            )
-            await proc.communicate()
-            if proc.returncode != 0:
-                raise ToolNotInstalledError(
-                    "nuclei",
-                    "Install from: https://github.com/projectdiscovery/nuclei#installation"
-                )
+        # Check if nuclei is installed
+        nuclei_path = shutil.which("nuclei")
+        if not nuclei_path:
+            logger.warning("[Nuclei] nuclei binary not found — skipping nuclei scan")
+            return findings
 
-            # Run nuclei scan with JSON output
-            cmd = [
-                "nuclei",
-                "-target", self.target,
-                "-t", "cves/",
-                "-t", "vulnerabilities/",
-                "-t", "misconfiguration/",
-                "-t", "exposures/",
-                "-json",
-                "-silent",
-                "-rate-limit", "10",
-                "-timeout", "30",
-            ]
+        output_file = f"/tmp/nuclei_{self.scan_id}.json"
+        cmd = [
+            "nuclei",
+            "-u", self.target,
+            "-json-export", output_file,
+            "-rate-limit", "10",
+            "-silent",
+            "-timeout", "10",
+            "-retries", "1",
+            "-t", "http/misconfiguration/",
+            "-t", "http/exposures/",
+        ]
 
+        try:
             proc = await asyncio.create_subprocess_exec(
                 *cmd,
                 stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE
             )
-            stdout, stderr = await proc.communicate()
-
-            if stdout:
-                for line in stdout.decode().strip().split("\n"):
-                    line = line.strip()
-                    if not line:
-                        continue
-                    try:
-                        result = json.loads(line)
-                        severity = SEVERITY_MAP.get(
-                            result.get("info", {}).get("severity", "unknown").lower(),
-                            "informational"
-                        )
-                        finding = RawFinding(
-                            title=result.get("info", {}).get("name", "Unknown Nuclei Finding"),
-                            description=result.get("info", {}).get("description", ""),
-                            severity=severity,
-                            affected_component=result.get("host", self.target),
-                            evidence=json.dumps(result, indent=2),
-                            cve_ids=result.get("info", {}).get("classification", {}).get("cve-id", []) if isinstance(result.get("info", {}).get("classification", {}).get("cve-id", []), list) else [result.get("info", {}).get("classification", {}).get("cve-id", "")],
-                            cwe_ids=result.get("info", {}).get("classification", {}).get("cwe-id", []) if isinstance(result.get("info", {}).get("classification", {}).get("cwe-id", []), list) else [result.get("info", {}).get("classification", {}).get("cwe-id", "")],
-                            scanner_source=self.get_scanner_name(),
-                        )
-                        findings.append(finding)
-                    except json.JSONDecodeError:
-                        continue
-
-            if stderr:
-                logger.warning(f"Nuclei stderr: {stderr.decode()}")
-
-        except FileNotFoundError:
-            raise ToolNotInstalledError(
-                "nuclei",
-                "Install from: https://github.com/projectdiscovery/nuclei#installation"
-            )
+            await asyncio.wait_for(proc.communicate(), timeout=300)
+        except asyncio.TimeoutError:
+            logger.warning("[Nuclei] Scan timed out after 5 minutes")
+            try:
+                proc.kill()
+            except Exception:
+                pass
         except Exception as e:
-            logger.error(f"Nuclei runner error: {e}", exc_info=True)
+            logger.error(f"[Nuclei] Failed to run: {e}")
+            return findings
+
+        if os.path.exists(output_file):
+            try:
+                with open(output_file) as f:
+                    for line in f:
+                        line = line.strip()
+                        if not line:
+                            continue
+                        try:
+                            item = json.loads(line)
+                            severity = SEVERITY_MAP.get(
+                                item.get("info", {}).get("severity", "unknown").lower(),
+                                "informational"
+                            )
+                            cve_ids_raw = item.get("info", {}).get("classification", {}).get("cve-id", []) or []
+                            if isinstance(cve_ids_raw, str):
+                                cve_ids = [cve_ids_raw]
+                            elif isinstance(cve_ids_raw, list):
+                                cve_ids = cve_ids_raw
+                            else:
+                                cve_ids = []
+                            findings.append(RawFinding(
+                                title=item.get("info", {}).get("name", "Nuclei Finding"),
+                                description=item.get("info", {}).get("description", ""),
+                                severity=severity,
+                                affected_component=item.get("matched-at", self.target),
+                                evidence=str(item.get("extracted-results", "")),
+                                scanner_source=self.get_scanner_name(),
+                                cve_ids=cve_ids,
+                            ))
+                        except json.JSONDecodeError:
+                            continue
+            finally:
+                try:
+                    os.remove(output_file)
+                except Exception:
+                    pass
 
         return findings

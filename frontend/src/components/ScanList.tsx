@@ -1,19 +1,17 @@
-import React from 'react';
-import { Link } from 'react-router-dom';
-import { useScans } from '../hooks/useScans';
+import { useNavigate } from 'react-router-dom'
+import { useScans } from '../hooks/useScans'
 
 export default function ScanList() {
-  const { data, isLoading } = useScans({ page: 1 });
+  const navigate = useNavigate()
+  const { scans, loading } = useScans()
 
-  if (isLoading) {
+  if (loading) {
     return (
       <div className="flex justify-center py-8">
         <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-indigo-600"></div>
       </div>
-    );
+    )
   }
-
-  const scans = data?.items || [];
 
   return (
     <div className="bg-white rounded-lg shadow-sm border border-gray-200">
@@ -52,12 +50,12 @@ export default function ScanList() {
                   {new Date(scan.created_at).toLocaleDateString()}
                 </td>
                 <td className="px-4 py-3 text-right">
-                  <Link
-                    to={`/scans/${scan.id}`}
+                  <button
+                    onClick={() => navigate(`/scans/${scan.id}`)}
                     className="text-sm text-indigo-600 hover:text-indigo-800 font-medium"
                   >
                     View
-                  </Link>
+                  </button>
                 </td>
               </tr>
             ))}
@@ -72,5 +70,5 @@ export default function ScanList() {
         </table>
       </div>
     </div>
-  );
+  )
 }

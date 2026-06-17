@@ -1,28 +1,16 @@
-You are a senior security engineer. A vulnerability has been found in a system you are responsible for fixing.
+You are a security engineer. Provide a brief remediation for this vulnerability.
 
-FINDING:
-Title: {title}
-Severity: {adjusted_severity}
-Description: {description}
-Affected Component: {affected_component}
-Evidence: {evidence}
-CVE IDs: {cve_ids}
-CWE IDs: {cwe_ids}
+FINDING: {title}
+SEVERITY: {adjusted_severity}
+COMPONENT: {affected_component}
+DESCRIPTION: {description}
+TECH STACK: {tech_stack}
 
-DETECTED TECHNOLOGY STACK:
-{tech_stack}
+Respond in plain text with exactly 3 short sections:
+IMMEDIATE: One sentence on what to do right now.
+FIX: The specific code or config change needed (max 5 lines).
+VERIFY: One command to confirm the fix worked.
 
-Generate a remediation guide with exactly three sections:
+Keep total response under 150 words. Be direct. No preamble.
 
-## Immediate Mitigation
-What can be done RIGHT NOW to reduce risk, even before a full fix (e.g. WAF rule, disable feature, restrict access). Be specific to the technology stack above.
-
-## Permanent Fix
-Provide the actual fix. If this is a code issue, write the corrected code snippet. If this is a configuration issue, write the corrected config. Be specific to {tech_stack}. Include library versions where relevant.
-
-## Verification
-Explain exactly how to verify the fix worked. Include a specific command, HTTP request, or test case the engineer can run.
-
-Keep the total response under 500 words. Be direct and technical. No boilerplate.
-
-CRITICAL INSTRUCTION: Respond with plain text only. No JSON. No markdown headers. Just the three remediation sections in plain text format.
+CRITICAL INSTRUCTION: Respond with plain text only. No JSON. No markdown headers with ##. Just the three sections labeled IMMEDIATE, FIX, VERIFY.

@@ -88,11 +88,13 @@ from backend.api.routes.health import router as health_router
 from backend.api.routes.scans import router as scans_router
 from backend.api.routes.findings import router as findings_router
 from backend.api.routes.reports import router as reports_router
+from backend.api.routes.demo import router as demo_router
 
 app.include_router(health_router)
 app.include_router(scans_router)
 app.include_router(findings_router)
 app.include_router(reports_router)
+app.include_router(demo_router)
 
 
 @app.get("/")

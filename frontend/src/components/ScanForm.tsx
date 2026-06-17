@@ -1,6 +1,6 @@
-import React, { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
-import { useCreateScan } from '../hooks/useScans';
+import { useState } from 'react'
+import { useNavigate } from 'react-router-dom'
+import { scanApi } from '../api/client'
 
 const SCAN_TYPE_OPTIONS = [
   { value: 'port', label: 'Port Scan (nmap)' },
@@ -8,52 +8,55 @@ const SCAN_TYPE_OPTIONS = [
   { value: 'header', label: 'Header Analysis' },
   { value: 'ssl', label: 'SSL Check' },
   { value: 'semgrep', label: 'Semgrep (SAST - local dirs only)' },
-];
+]
 
 export default function ScanForm() {
-  const navigate = useNavigate();
-  const createScan = useCreateScan();
+  const navigate = useNavigate()
 
-  const [target, setTarget] = useState('');
-  const [scopeInput, setScopeInput] = useState('');
-  const [scanTypes, setScanTypes] = useState<string[]>(['port', 'web', 'nuclei', 'header', 'ssl']);
-  const [authorisationConfirmed, setAuthorisationConfirmed] = useState(false);
-  const [error, setError] = useState('');
+  const [target, setTarget] = useState('')
+  const [scopeInput, setScopeInput] = useState('')
+  const [scanTypes, setScanTypes] = useState<string[]>(['port', 'web', 'header', 'ssl'])
+  const [authorisationConfirmed, setAuthorisationConfirmed] = useState(false)
+  const [error, setError] = useState('')
+  const [submitting, setSubmitting] = useState(false)
 
   const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setError('');
+    e.preventDefault()
+    setError('')
 
     if (!authorisationConfirmed) {
-      setError('You must confirm authorisation before running a scan.');
-      return;
+      setError('You must confirm authorisation before running a scan.')
+      return
     }
 
-    const scope = scopeInput.split('\n').filter(s => s.trim()).map(s => s.trim());
+    const scope = scopeInput.split('\n').filter(s => s.trim()).map(s => s.trim())
 
     if (scope.length === 0) {
-      setError('Scope must not be empty. Add at least one host, CIDR, or domain.');
-      return;
+      setError('Scope must not be empty. Add at least one host, CIDR, or domain.')
+      return
     }
 
+    setSubmitting(true)
     try {
-      const result = await createScan.mutateAsync({
+      const result = await scanApi.create({
         target,
         scope,
         scan_types: scanTypes,
         authorisation_confirmed: true,
-      });
-      navigate(`/scans/${result.id}`);
+      })
+      navigate(`/scans/${result.id}`)
     } catch (err: any) {
-      setError(err.response?.data?.detail || err.message || 'Failed to create scan');
+      setError(err.response?.data?.detail || err.message || 'Failed to create scan')
+    } finally {
+      setSubmitting(false)
     }
-  };
+  }
 
   const toggleScanType = (value: string) => {
     setScanTypes(prev =>
       prev.includes(value) ? prev.filter(v => v !== value) : [...prev, value]
-    );
-  };
+    )
+  }
 
   return (
     <form onSubmit={handleSubmit} className="bg-white rounded-lg shadow-sm border border-gray-200 p-6 space-y-6">
@@ -135,11 +138,11 @@ export default function ScanForm() {
       {/* Submit */}
       <button
         type="submit"
-        disabled={!authorisationConfirmed || createScan.isPending}
+        disabled={!authorisationConfirmed || submitting}
         className="w-full bg-indigo-600 text-white py-2 px-4 rounded-md hover:bg-indigo-700 disabled:bg-gray-400 disabled:cursor-not-allowed text-sm font-medium transition-colors"
       >
-        {createScan.isPending ? 'Creating Scan...' : 'Start Scan'}
+        {submitting ? 'Creating Scan...' : 'Start Scan'}
       </button>
     </form>
-  );
+  )
 }

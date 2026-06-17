@@ -1,74 +1,119 @@
-import React from 'react';
-import { useParams, Link } from 'react-router-dom';
-import { useScan, useScanStatus, useDownloadReport } from '../hooks/useScans';
-import { useFindings } from '../hooks/useFindings';
-import FindingCard from './FindingCard';
+import { useState, useEffect } from 'react'
+import { useParams, Link, useSearchParams } from 'react-router-dom'
+import { useScan } from '../hooks/useScans'
+import { useFindings } from '../hooks/useFindings'
+import FindingCard from './FindingCard'
+import { reportApi } from '../api/client'
+
+const PHASES = [
+  { time: 0, label: 'Initialising scan...' },
+  { time: 10, label: 'Running port discovery...' },
+  { time: 30, label: 'Crawling web surface...' },
+  { time: 60, label: 'Running vulnerability detection...' },
+  { time: 120, label: 'AI is analysing findings...' },
+]
 
 export default function ScanDetail() {
-  const { id } = useParams<{ id: string }>();
-  const { data: scan, isLoading: scanLoading } = useScan(id);
-  const { data: status } = useScanStatus(id, scan?.status === 'running' || scan?.status === 'pending');
-  const { data: findings, isLoading: findingsLoading } = useFindings(id);
-  const downloadReport = useDownloadReport();
+  const { id } = useParams<{ id: string }>()
+  const [searchParams] = useSearchParams()
+  const isDemo = searchParams.get('demo') === 'true'
+  const { scan, loading: scanLoading } = useScan(id)
+  const { findings, loading: findingsLoading } = useFindings(id)
+  const [elapsed, setElapsed] = useState(0)
 
-  const currentStatus = status?.status || scan?.status || 'pending';
+  const currentStatus = scan?.status || 'pending'
 
-  if (scanLoading) {
+  useEffect(() => {
+    if (currentStatus === 'running' || currentStatus === 'pending') {
+      const interval = setInterval(() => {
+        setElapsed((prev) => prev + 3)
+      }, 3000)
+      return () => clearInterval(interval)
+    }
+  }, [currentStatus])
+
+  const getCurrentPhase = () => {
+    let phase = PHASES[0]
+    for (const p of PHASES) {
+      if (elapsed >= p.time) {
+        phase = p
+      }
+    }
+    return phase
+  }
+
+  if (scanLoading && !isDemo) {
     return (
       <div className="flex justify-center items-center h-64">
         <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-indigo-600"></div>
       </div>
-    );
+    )
   }
 
-  if (!scan) {
+  if (!scan && !isDemo) {
     return (
       <div className="text-center py-12">
         <p className="text-gray-500">Scan not found</p>
         <Link to="/" className="text-indigo-600 hover:text-indigo-800 mt-4 inline-block">Back to Dashboard</Link>
       </div>
-    );
+    )
   }
 
-  const handleDownloadReport = async () => {
-    try {
-      const blob = await downloadReport.mutateAsync(scan.id);
-      const url = window.URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = `vulnai_report_${scan.id.slice(0, 8)}.pdf`;
-      document.body.appendChild(a);
-      a.click();
-      window.URL.revokeObjectURL(url);
-      document.body.removeChild(a);
-    } catch (err) {
-      console.error('Failed to download report:', err);
-    }
-  };
+  const displayTarget = isDemo ? 'http://demo-target.vulnai.local' : (scan?.target || '')
+  const displayScan = isDemo ? {
+    id: 'demo-scan-00000000-0000-0000-0000-000000000001',
+    target: 'http://demo-target.vulnai.local',
+    scope: ['demo-target.vulnai.local'],
+    status: 'completed' as const,
+    scan_types: ['port', 'web', 'nuclei', 'headers', 'ssl'],
+    summary: 'This security assessment identified 8 findings across the target system, including 3 critical vulnerabilities requiring immediate remediation.',
+    total_findings: 8,
+    critical_count: 3,
+    high_count: 3,
+    medium_count: 2,
+    low_count: 0,
+    info_count: 0,
+    created_at: new Date().toISOString(),
+  } : scan
+
+  const pdfUrl = scan?.id ? reportApi.getPdfUrl(scan.id) : ''
 
   return (
     <div className="space-y-6">
+      {/* Demo mode banner */}
+      {isDemo && (
+        <div className="bg-yellow-50 border-2 border-yellow-400 rounded-lg p-4">
+          <div className="flex items-center">
+            <span className="text-xl mr-2">⚠️</span>
+            <p className="text-yellow-800 font-medium">
+              DEMO MODE — This is simulated data for demonstration purposes
+            </p>
+          </div>
+        </div>
+      )}
+
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
           <Link to="/" className="text-sm text-indigo-600 hover:text-indigo-800">&larr; Back</Link>
-          <h1 className="text-2xl font-bold text-gray-900 mt-1">{scan.target}</h1>
+          <h1 className="text-2xl font-bold text-gray-900 mt-1">{displayTarget}</h1>
         </div>
         <div className="flex items-center space-x-3">
-          {(currentStatus === 'running' || currentStatus === 'pending') && (
-            <div className="flex items-center space-x-2 text-blue-600">
-              <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-blue-600"></div>
-              <span className="text-sm font-medium">{currentStatus.toUpperCase()}</span>
+          {(currentStatus === 'running' || currentStatus === 'pending') && !isDemo && (
+            <div className="flex items-center space-x-3 text-blue-600">
+              <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-blue-600"></div>
+              <span className="text-sm font-medium">{getCurrentPhase().label}</span>
             </div>
           )}
-          {currentStatus === 'completed' && (
-            <button
-              onClick={handleDownloadReport}
-              disabled={downloadReport.isPending}
-              className="bg-green-600 text-white px-4 py-2 rounded-md text-sm font-medium hover:bg-green-700 disabled:bg-gray-400"
+          {currentStatus === 'completed' && displayScan && (
+            <a
+              href={pdfUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="bg-green-600 text-white px-4 py-2 rounded-md text-sm font-medium hover:bg-green-700"
             >
-              {downloadReport.isPending ? 'Generating...' : 'Download PDF Report'}
-            </button>
+              Download PDF Report
+            </a>
           )}
         </div>
       </div>
@@ -87,42 +132,44 @@ export default function ScanDetail() {
           </div>
           <div>
             <p className="text-xs text-gray-500 uppercase">Scan Types</p>
-            <p className="text-sm font-medium mt-1">{scan.scan_types?.join(', ')}</p>
+            <p className="text-sm font-medium mt-1">{displayScan?.scan_types?.join(', ') || ''}</p>
           </div>
           <div>
             <p className="text-xs text-gray-500 uppercase">Scope</p>
-            <p className="text-sm font-medium mt-1">{scan.scope?.join(', ')}</p>
+            <p className="text-sm font-medium mt-1">{displayScan?.scope?.join(', ') || ''}</p>
           </div>
           <div>
             <p className="text-xs text-gray-500 uppercase">Created</p>
-            <p className="text-sm font-medium mt-1">{new Date(scan.created_at).toLocaleString()}</p>
+            <p className="text-sm font-medium mt-1">{displayScan?.created_at ? new Date(displayScan.created_at).toLocaleString() : ''}</p>
           </div>
         </div>
       </div>
 
       {/* Summary (if available) */}
-      {scan.summary && (
+      {displayScan?.summary && (
         <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-4">
           <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wider mb-2">Executive Summary</h2>
-          <p className="text-sm text-gray-700">{scan.summary}</p>
+          <p className="text-sm text-gray-700">{displayScan.summary}</p>
         </div>
       )}
 
       {/* Severity Counts */}
-      <div className="grid grid-cols-5 gap-3">
-        {[
-          { label: 'Critical', value: scan.critical_count, color: 'text-red-600', bg: 'bg-red-50' },
-          { label: 'High', value: scan.high_count, color: 'text-orange-600', bg: 'bg-orange-50' },
-          { label: 'Medium', value: scan.medium_count, color: 'text-yellow-600', bg: 'bg-yellow-50' },
-          { label: 'Low', value: scan.low_count, color: 'text-blue-600', bg: 'bg-blue-50' },
-          { label: 'Info', value: scan.info_count, color: 'text-gray-600', bg: 'bg-gray-50' },
-        ].map((item) => (
-          <div key={item.label} className={`${item.bg} rounded-lg p-3 text-center`}>
-            <p className={`text-2xl font-bold ${item.color}`}>{item.value}</p>
-            <p className="text-xs text-gray-500 mt-1">{item.label}</p>
-          </div>
-        ))}
-      </div>
+      {displayScan && (
+        <div className="grid grid-cols-5 gap-3">
+          {[
+            { label: 'Critical', value: (displayScan as any).critical_count, color: 'text-red-600', bg: 'bg-red-50' },
+            { label: 'High', value: (displayScan as any).high_count, color: 'text-orange-600', bg: 'bg-orange-50' },
+            { label: 'Medium', value: (displayScan as any).medium_count, color: 'text-yellow-600', bg: 'bg-yellow-50' },
+            { label: 'Low', value: (displayScan as any).low_count, color: 'text-blue-600', bg: 'bg-blue-50' },
+            { label: 'Info', value: (displayScan as any).info_count, color: 'text-gray-600', bg: 'bg-gray-50' },
+          ].map((item) => (
+            <div key={item.label} className={`${item.bg} rounded-lg p-3 text-center`}>
+              <p className={`text-2xl font-bold ${item.color}`}>{item.value}</p>
+              <p className="text-xs text-gray-500 mt-1">{item.label}</p>
+            </div>
+          ))}
+        </div>
+      )}
 
       {/* Findings */}
       <div>
@@ -140,11 +187,11 @@ export default function ScanDetail() {
             </div>
           ) : (
             findings?.map((finding) => (
-              <FindingCard key={finding.id} finding={finding} />
+              <FindingCard key={finding.id} finding={finding as any} />
             ))
           )}
         </div>
       </div>
     </div>
-  );
+  )
 }

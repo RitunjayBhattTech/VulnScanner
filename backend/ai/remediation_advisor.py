@@ -21,36 +21,28 @@ class RemediationAdvisor:
         Generate a remediation guide for a finding.
         Returns formatted markdown with immediate mitigation, permanent fix, and verification steps.
         """
-        user_prompt = f"""FINDING:
-Title: {finding.title}
-Severity: {finding.adjusted_severity}
-Description: {finding.description or 'N/A'}
-Affected Component: {finding.affected_component or 'N/A'}
-Evidence: {finding.evidence or 'N/A'}
-CVE IDs: {', '.join(finding.cve_ids) if finding.cve_ids else 'None'}
-CWE IDs: {', '.join(finding.cwe_ids) if finding.cwe_ids else 'None'}
-
-DETECTED TECHNOLOGY STACK:
-{', '.join(tech_stack) if tech_stack else 'Unknown'}
-
-Generate a remediation guide with exactly three sections:
-
-## Immediate Mitigation
-What can be done RIGHT NOW to reduce risk, even before a full fix (e.g. WAF rule, disable feature, restrict access). Be specific to the technology stack above.
-
-## Permanent Fix
-Provide the actual fix. If this is a code issue, write the corrected code snippet. If this is a configuration issue, write the corrected config. Be specific to the technology stack. Include library versions where relevant.
-
-## Verification
-Explain exactly how to verify the fix worked. Include a specific command, HTTP request, or test case the engineer can run.
-
-Keep the total response under 500 words. Be direct and technical. No boilerplate."""
+        # Load prompt from file
+        import os
+        prompt_path = os.path.join(os.path.dirname(__file__), "prompts", "remediation_prompt.txt")
+        try:
+            with open(prompt_path) as f:
+                prompt_template = f.read()
+        except FileNotFoundError:
+            prompt_template = "Generate a brief remediation for finding: {title} at {affected_component}. Tech: {tech_stack}"
+        
+        user_prompt = prompt_template.format(
+            title=finding.title,
+            adjusted_severity=finding.adjusted_severity,
+            affected_component=finding.affected_component or "N/A",
+            description=finding.description or "No description",
+            tech_stack=", ".join(tech_stack) if tech_stack else "Unknown",
+        )
 
         try:
             response = await llm_client.complete(
                 system=REMEDIATION_SYSTEM_PROMPT,
                 user=user_prompt,
-                max_tokens=1500,
+                max_tokens=300,
             )
 
             if response:
@@ -58,8 +50,8 @@ Keep the total response under 500 words. Be direct and technical. No boilerplate
             return "Remediation advice not available (API not configured)."
 
         except Exception as e:
-            logger.error(f"Remediation advisor error: {e}")
-            return f"Error generating remediation: {str(e)}"
+            logger.warning(f"[Remediation] LLM call failed, using default remediation: {e}")
+            return "## Remediation\nRemediation advice could not be generated automatically due to an AI service error.\n\n## Recommended Actions\n1. Manually research this vulnerability class for your technology stack.\n2. Apply security best practices for the affected component.\n3. Verify the fix with appropriate security testing tools."
 
 
 # Global instance

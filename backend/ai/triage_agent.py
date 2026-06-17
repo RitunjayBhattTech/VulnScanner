@@ -100,12 +100,31 @@ Respond ONLY in this exact JSON format, with no preamble:
                 scanner_source=finding.scanner_source,
             )
 
-        except (json.JSONDecodeError, ValueError, TypeError) as e:
-            logger.warning(f"Failed to parse triage response: {e}")
-            return None
         except Exception as e:
-            logger.error(f"Triage agent error: {e}", exc_info=True)
-            return None
+            logger.warning(f"[Triage] LLM call failed, using default triage: {e}")
+            return TriagedFinding(
+                title=finding.title,
+                description=finding.description,
+                severity=finding.severity,
+                adjusted_severity=finding.severity,
+                severity_changed=False,
+                severity_change_reason=None,
+                cvss_score=finding.cvss_score,
+                cve_ids=finding.cve_ids,
+                cwe_ids=finding.cwe_ids,
+                affected_component=finding.affected_component,
+                evidence=finding.evidence,
+                ai_triage_notes="Automated triage unavailable. Manual review required.",
+                ai_remediation=None,
+                exploitability_notes="Automated triage unavailable. Manual review required.",
+                business_impact="Unknown — manual assessment needed.",
+                contextual_notes=f"LLM triage failed: {str(e)[:100]}",
+                false_positive_probability=0.0,
+                is_false_positive=False,
+                recommended_priority=5,
+                scanner_source=finding.scanner_source,
+                delta_status=None,
+            )
 
 
 # Global instance

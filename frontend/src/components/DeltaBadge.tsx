@@ -1,25 +1,20 @@
-import React from 'react';
-
 interface Props {
-  deltaStatus: string | null | undefined;
+  status?: string | null
 }
 
-const deltaConfig: Record<string, { label: string; classes: string }> = {
-  new: { label: 'NEW', classes: 'bg-red-100 text-red-700 border-red-300' },
-  fixed: { label: 'FIXED', classes: 'bg-green-100 text-green-700 border-green-300' },
-  regressed: { label: 'REGRESSED', classes: 'bg-orange-100 text-orange-700 border-orange-300' },
-  existing: { label: 'EXISTING', classes: 'bg-gray-100 text-gray-600 border-gray-200' },
-};
+const CONFIG: Record<string, { label: string; className: string }> = {
+  new:       { label: 'NEW',       className: 'bg-green-900/50 text-green-400 border-green-800' },
+  fixed:     { label: 'FIXED',     className: 'bg-blue-900/50 text-blue-400 border-blue-800' },
+  regressed: { label: 'REGRESSED', className: 'bg-red-900/50 text-red-400 border-red-800' },
+  existing:  { label: 'EXISTING',  className: 'bg-gray-900/50 text-gray-400 border-gray-700' },
+}
 
-export default function DeltaBadge({ deltaStatus }: Props) {
-  if (!deltaStatus) return null;
-
-  const config = deltaConfig[deltaStatus.toLowerCase()];
-  if (!config) return null;
-
+export default function DeltaBadge({ status }: Props) {
+  if (!status) return null
+  const cfg = CONFIG[status] ?? CONFIG.existing
   return (
-    <span className={`inline-flex items-center px-2 py-0.5 text-xs font-medium rounded border ${config.classes}`}>
-      {config.label}
+    <span className={`px-2 py-0.5 rounded text-xs font-medium border ${cfg.className}`}>
+      {cfg.label}
     </span>
-  );
+  )
 }

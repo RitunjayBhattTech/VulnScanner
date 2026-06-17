@@ -1,125 +1,94 @@
-import React, { useState } from 'react';
-import type { Finding } from '../types';
-import SeverityBadge from './SeverityBadge';
-import DeltaBadge from './DeltaBadge';
+import { useState } from 'react'
+import type { Finding } from '../types'
+import SeverityBadge from './SeverityBadge'
+import DeltaBadge from './DeltaBadge'
+import RemediationPanel from './RemediationPanel'
 
 interface Props {
-  finding: Finding;
+  finding: Finding
+  index?: number
 }
 
-export default function FindingCard({ finding }: Props) {
-  const [expanded, setExpanded] = useState(false);
-  const [showRemediation, setShowRemediation] = useState(false);
+export default function FindingCard({ finding, index }: Props) {
+  const [expanded, setExpanded] = useState(false)
 
   return (
-    <div className="bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden">
+    <div className="border border-[#1e2a45] rounded-xl overflow-hidden bg-[#0f1629] hover:border-[#243352] transition-colors">
       <button
-        onClick={() => setExpanded(!expanded)}
-        className="w-full text-left px-4 py-3 hover:bg-gray-50 transition-colors"
+        className="w-full text-left p-4 flex items-center gap-4"
+        onClick={() => setExpanded(e => !e)}
+        type="button"
       >
-        <div className="flex items-center justify-between">
-          <div className="flex items-center space-x-3 flex-1 min-w-0">
-            <SeverityBadge severity={finding.severity} size="sm" />
-            {finding.delta_status && <DeltaBadge deltaStatus={finding.delta_status} />}
-            {finding.is_false_positive && (
-              <span className="inline-flex items-center px-2 py-0.5 text-xs font-medium rounded bg-purple-100 text-purple-700 border border-purple-300">
-                FALSE POSITIVE
-              </span>
-            )}
-            <h3 className="text-sm font-medium text-gray-900 truncate">{finding.title}</h3>
+        {index !== undefined && (
+          <span className="text-slate-600 text-xs font-mono w-6 shrink-0">#{index}</span>
+        )}
+        <SeverityBadge severity={finding.severity} />
+        <div className="flex-1 min-w-0">
+          <div className="text-white font-medium text-sm truncate">{finding.title}</div>
+          <div className="text-slate-400 text-xs font-mono mt-0.5 truncate">
+            {finding.affected_component}
           </div>
-          <div className="flex items-center space-x-2 ml-4">
-            {finding.affected_component && (
-              <span className="text-xs text-gray-500 truncate max-w-[200px]">{finding.affected_component}</span>
-            )}
-            <svg className={`w-4 h-4 text-gray-400 transform transition-transform ${expanded ? 'rotate-180' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-            </svg>
-          </div>
+        </div>
+        <div className="flex items-center gap-2 shrink-0">
+          <DeltaBadge status={finding.delta_status} />
+          {finding.is_false_positive && (
+            <span className="px-2 py-0.5 text-xs bg-gray-800 text-gray-400 rounded border border-gray-700">
+              FP
+            </span>
+          )}
+          <span className="text-slate-500 text-sm">{expanded ? '▲' : '▼'}</span>
         </div>
       </button>
 
       {expanded && (
-        <div className="px-4 pb-4 space-y-3">
-          {/* Description */}
-          {finding.description && (
-            <div>
-              <h4 className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1">Description</h4>
-              <p className="text-sm text-gray-700">{finding.description}</p>
-            </div>
-          )}
+        <div className="px-4 pb-4 space-y-4 border-t border-[#1e2a45] pt-4">
+          <div>
+            <div className="text-xs font-medium text-slate-400 uppercase tracking-wider mb-1">Description</div>
+            <p className="text-slate-300 text-sm leading-relaxed">{finding.description}</p>
+          </div>
 
-          {/* Evidence */}
           {finding.evidence && (
             <div>
-              <h4 className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1">Evidence</h4>
-              <pre className="bg-gray-900 text-gray-100 p-3 rounded text-xs overflow-x-auto max-h-40">
-                {finding.evidence.length > 500 ? finding.evidence.slice(0, 500) + '...' : finding.evidence}
+              <div className="text-xs font-medium text-slate-400 uppercase tracking-wider mb-1">Evidence</div>
+              <pre className="bg-[#0a0e1a] border border-[#1e2a45] rounded-lg p-3 text-xs text-green-400 font-mono overflow-x-auto whitespace-pre-wrap">
+                {finding.evidence.slice(0, 400)}
               </pre>
             </div>
           )}
 
-          {/* AI Triage */}
           {finding.ai_triage_notes && (
             <div>
-              <h4 className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1">AI Triage Notes</h4>
-              <p className="text-sm text-gray-700">{finding.ai_triage_notes}</p>
+              <div className="text-xs font-medium text-blue-400 uppercase tracking-wider mb-1 flex items-center gap-1">
+                <span>◆</span> AI Triage
+              </div>
+              <p className="text-slate-300 text-sm leading-relaxed italic">{finding.ai_triage_notes}</p>
             </div>
           )}
 
-          {/* CVE/CWE IDs */}
           {(finding.cve_ids?.length > 0 || finding.cwe_ids?.length > 0) && (
             <div className="flex flex-wrap gap-2">
-              {finding.cve_ids?.map((cve) => (
+              {finding.cve_ids?.map(cve => (
                 <a
                   key={cve}
                   href={`https://nvd.nist.gov/vuln/detail/${cve}`}
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="text-xs text-blue-600 hover:text-blue-800 underline"
+                  className="px-2 py-0.5 text-xs bg-red-900/30 text-red-400 border border-red-800 rounded font-mono hover:bg-red-900/50 transition-colors"
                 >
-                  {cve}
+                  {cve} ↗
                 </a>
               ))}
-              {finding.cwe_ids?.map((cwe) => (
-                <a
-                  key={cwe}
-                  href={`https://cwe.mitre.org/data/definitions/${cwe.replace('CWE-', '')}.html`}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="text-xs text-blue-600 hover:text-blue-800 underline"
-                >
+              {finding.cwe_ids?.map(cwe => (
+                <span key={cwe} className="px-2 py-0.5 text-xs bg-orange-900/30 text-orange-400 border border-orange-800 rounded font-mono">
                   {cwe}
-                </a>
+                </span>
               ))}
             </div>
           )}
 
-          {/* Scanner source */}
-          {finding.scanner_source && (
-            <p className="text-xs text-gray-400">
-              Source: {finding.scanner_source} | {new Date(finding.created_at).toLocaleString()}
-            </p>
-          )}
-
-          {/* Remediation toggle */}
-          {finding.ai_remediation && (
-            <div>
-              <button
-                onClick={() => setShowRemediation(!showRemediation)}
-                className="text-sm text-indigo-600 hover:text-indigo-800 font-medium"
-              >
-                {showRemediation ? 'Hide Remediation' : 'Show Remediation'}
-              </button>
-              {showRemediation && (
-                <div className="mt-2 p-3 bg-green-50 border border-green-200 rounded">
-                  <div className="text-sm text-gray-700 whitespace-pre-wrap">{finding.ai_remediation}</div>
-                </div>
-              )}
-            </div>
-          )}
+          <RemediationPanel remediation={finding.ai_remediation} />
         </div>
       )}
     </div>
-  );
+  )
 }

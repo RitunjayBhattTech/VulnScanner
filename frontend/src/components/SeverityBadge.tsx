@@ -1,30 +1,26 @@
-import React from 'react';
+import type { SeverityLevel } from '../types'
+import { SEVERITY_COLORS } from '../types'
 
 interface Props {
-  severity: string;
-  size?: 'sm' | 'md' | 'lg';
+  severity: string
+  size?: 'sm' | 'md'
 }
 
-const severityColors: Record<string, string> = {
-  critical: 'bg-red-100 text-red-800 border-red-300',
-  high: 'bg-orange-100 text-orange-800 border-orange-300',
-  medium: 'bg-yellow-100 text-yellow-800 border-yellow-300',
-  low: 'bg-blue-100 text-blue-800 border-blue-300',
-  informational: 'bg-gray-100 text-gray-800 border-gray-300',
-};
-
-export default function SeverityBadge({ severity, size = 'md' }: Props) {
-  const sizeClasses = {
-    sm: 'px-1.5 py-0.5 text-xs',
-    md: 'px-2 py-1 text-sm',
-    lg: 'px-3 py-1.5 text-base',
-  };
+export default function SeverityBadge({ severity, size = 'sm' }: Props) {
+  const key = severity?.toLowerCase() as SeverityLevel
+  const colors = SEVERITY_COLORS[key] ?? SEVERITY_COLORS.informational
+  const padding = size === 'sm' ? 'px-2 py-0.5 text-xs' : 'px-3 py-1 text-sm'
 
   return (
     <span
-      className={`inline-flex items-center font-medium rounded-full border ${severityColors[severity.toLowerCase()] || severityColors.informational} ${sizeClasses[size]}`}
+      className={`inline-flex items-center rounded font-bold uppercase ${padding}`}
+      style={{
+        backgroundColor: colors.bg + '33',
+        color: colors.bg,
+        border: `1px solid ${colors.border}`,
+      }}
     >
-      {severity.toUpperCase()}
+      {severity || 'unknown'}
     </span>
-  );
+  )
 }

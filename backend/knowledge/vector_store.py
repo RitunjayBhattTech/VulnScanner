@@ -18,7 +18,11 @@ class VectorStore:
         """Create a new VectorStore instance, initializing ChromaDB."""
         try:
             import chromadb
-            client = chromadb.PersistentClient(path=settings.CHROMA_PERSIST_DIR)
+            from chromadb.config import Settings as ChromaSettings
+            client = chromadb.PersistentClient(
+                path=settings.CHROMA_PERSIST_DIR,
+                settings=ChromaSettings(anonymized_telemetry=False)
+            )
             collections = {}
 
             # Create collections if they don't exist

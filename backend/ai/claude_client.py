@@ -51,7 +51,14 @@ class LLMClient:
         }
         for attempt in range(3):
             try:
-                async with httpx.AsyncClient(timeout=180.0) as client:
+                async with httpx.AsyncClient(
+                    timeout=httpx.Timeout(
+                        connect=10.0,
+                        read=120.0,
+                        write=10.0,
+                        pool=5.0
+                    )
+                ) as client:
                     logger.info(f"[Ollama] Sending request to {url} (attempt {attempt+1})")
                     resp = await client.post(url, json=payload)
                     resp.raise_for_status()

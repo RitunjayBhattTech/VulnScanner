@@ -1,6 +1,6 @@
 FROM python:3.11-slim
 
-# System dependencies
+# System dependencies (minimal - no Playwright/Chromium needed)
 RUN apt-get update && apt-get install -y \
     nmap \
     curl \
@@ -10,7 +10,6 @@ RUN apt-get update && apt-get install -y \
     libssl-dev \
     libffi-dev \
     python3-dev \
-    fonts-unifont \
     && rm -rf /var/lib/apt/lists/*
 
 # Install Go for nuclei
@@ -26,9 +25,6 @@ RUN go install -v github.com/projectdiscovery/nuclei/v3/cmd/nuclei@latest
 WORKDIR /app
 COPY backend/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
-
-# Install Playwright chromium browser (skip install-deps, deps are already installed above)
-RUN playwright install chromium
 
 # Copy source
 COPY backend/ ./backend/
