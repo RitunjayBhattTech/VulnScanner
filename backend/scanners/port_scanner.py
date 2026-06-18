@@ -39,7 +39,7 @@ class PortScanner(BaseScanner):
 
             # Validate scope first
             if not validate_scope(self.target, self.scope):
-                raise ScopeViolationError(f"Target {self.target} is outside declared scope")
+                raise ScopeViolationError(target=self.target, scope=self.scope)
 
             # Run nmap in a thread (blocking call)
             logger.info(f"[PortScanner] Scanning host: {nmap_target}")
