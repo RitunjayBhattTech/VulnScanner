@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from backend.api.deps import get_db_session
 from backend.config import settings
 from backend.models.scan import Scan, Finding, AuditLog, ScanStatus
+from backend.models.user import UserRole
 from backend.schemas.scan import (
     ScanCreateRequest,
     ScanResponse,
@@ -16,6 +17,7 @@ from backend.schemas.scan import (
     ScanStatusResponse,
 )
 from backend.core.security import generate_authorisation_token, write_audit_log
+from backend.core.auth import get_optional_user
 
 logger = logging.getLogger(__name__)
 
@@ -27,6 +29,7 @@ async def create_scan(
     req: ScanCreateRequest,
     request: Request,
     db: AsyncSession = Depends(get_db_session),
+    current_user = Depends(get_optional_user),
 ):
     """Create and queue a new scan."""
     # Validate scope is non-empty
@@ -55,6 +58,7 @@ async def create_scan(
         authorisation_token=auth_token,
         status=ScanStatus.pending,
         previous_scan_id=req.previous_scan_id,
+        owner_id=current_user.id if current_user else None,
     )
     db.add(scan)
     await db.commit()

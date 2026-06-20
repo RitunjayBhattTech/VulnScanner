@@ -35,9 +35,11 @@ class Scan(Base):
     low_count = Column(Integer, default=0)
     info_count = Column(Integer, default=0)
     previous_scan_id = Column(String, nullable=True)
+    owner_id = Column(String(36), ForeignKey("users.id"), nullable=True, index=True)
 
     findings = relationship("Finding", back_populates="scan", cascade="all, delete-orphan")
     audit_logs = relationship("AuditLog", back_populates="scan", cascade="all, delete-orphan")
+    owner = relationship("User", back_populates="scans")
 
 
 class Finding(Base):

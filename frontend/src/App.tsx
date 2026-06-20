@@ -1,8 +1,11 @@
 import { BrowserRouter, Routes, Route, NavLink } from 'react-router-dom'
+import { AuthProvider, useAuth } from './context/AuthContext'
 import HomePage from './pages/HomePage'
 import ScanPage from './pages/ScanPage'
 import ScansListPage from './pages/ScansListPage'
 import FindingsPage from './pages/FindingsPage'
+import LoginPage from './pages/LoginPage'
+import AdminPage from './pages/AdminPage'
 import ErrorBoundary from './components/ErrorBoundary'
 
 const S = {
@@ -24,7 +27,6 @@ const S = {
   },
   nav: { flex: 1, padding: '16px', display: 'flex', flexDirection: 'column' as const, gap: '4px' },
   main: { marginLeft: '224px', flex: 1, padding: '32px', minHeight: '100vh' },
-  footer: { padding: '16px', borderTop: '1px solid #1e2a45', textAlign: 'center' as const },
 }
 
 function NavItem({ to, label, icon, end }: { to: string; label: string; icon: string; end?: boolean }) {
@@ -43,11 +45,7 @@ function NavItem({ to, label, icon, end }: { to: string; label: string; icon: st
 }
 
 function Sidebar() {
-  const navItems = [
-    { to: '/', label: 'Dashboard', icon: '⬡' },
-    { to: '/scans', label: 'All Scans', icon: '◎' },
-    { to: '/findings', label: 'Findings', icon: '◈' },
-  ]
+  const { user, logout, isAdmin } = useAuth()
 
   return (
     <aside style={S.sidebar}>
@@ -59,33 +57,72 @@ function Sidebar() {
         </div>
       </div>
       <nav style={S.nav}>
-        {navItems.map(item => (
-          <NavItem key={item.to} to={item.to} label={item.label} icon={item.icon} end={item.to === '/'} />
-        ))}
+        <NavItem to="/" label="Dashboard" icon="⬡" end />
+        <NavItem to="/scans" label="All Scans" icon="◎" />
+        <NavItem to="/findings" label="Findings" icon="◈" />
+        {isAdmin && <NavItem to="/admin" label="Admin Panel" icon="⚙" />}
       </nav>
-      <div style={S.footer}>
+      {user && (
+        <div style={{ padding: '12px 16px', borderTop: '1px solid #1e2a45' }}>
+          <div style={{ color: '#94a3b8', fontSize: '12px', marginBottom: '8px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            👤 {user.username}
+            {isAdmin && <span style={{ marginLeft: '6px', fontSize: '10px', color: '#3b82f6', fontWeight: 600 }}>ADMIN</span>}
+          </div>
+          <button
+            onClick={logout}
+            style={{
+              width: '100%', padding: '7px', borderRadius: '8px',
+              background: 'transparent', border: '1px solid #1e2a45',
+              color: '#64748b', fontSize: '12px', cursor: 'pointer',
+              transition: 'all 0.15s',
+            }}
+            onMouseEnter={e => { e.currentTarget.style.borderColor = '#f87171'; e.currentTarget.style.color = '#f87171' }}
+            onMouseLeave={e => { e.currentTarget.style.borderColor = '#1e2a45'; e.currentTarget.style.color = '#64748b' }}
+          >
+            Sign Out
+          </button>
+        </div>
+      )}
+      <div style={{ padding: '8px 16px 16px', textAlign: 'center' }}>
         <span style={{ color: '#475569', fontSize: '11px' }}>Authorised testing only</span>
       </div>
     </aside>
   )
 }
 
+function AppLayout() {
+  const { isAuthenticated } = useAuth()
+
+  // Not logged in → full screen login, NO sidebar
+  if (!isAuthenticated) {
+    return <LoginPage />
+  }
+
+  // Logged in → sidebar + dashboard
+  return (
+    <div style={{ display: 'flex', minHeight: '100vh', background: '#0a0e1a' }}>
+      <Sidebar />
+      <main style={S.main}>
+        <Routes>
+          <Route path="/" element={<HomePage />} />
+          <Route path="/scans" element={<ScansListPage />} />
+          <Route path="/scans/:scanId" element={<ScanPage />} />
+          <Route path="/findings" element={<FindingsPage />} />
+          <Route path="/admin" element={<AdminPage />} />
+        </Routes>
+      </main>
+    </div>
+  )
+}
+
 export default function App() {
   return (
-    <ErrorBoundary>
-      <BrowserRouter>
-        <div style={{ display: 'flex', minHeight: '100vh', background: '#0a0e1a' }}>
-          <Sidebar />
-          <main style={S.main}>
-            <Routes>
-              <Route path="/" element={<HomePage />} />
-              <Route path="/scans" element={<ScansListPage />} />
-              <Route path="/scans/:scanId" element={<ScanPage />} />
-              <Route path="/findings" element={<FindingsPage />} />
-            </Routes>
-          </main>
-        </div>
-      </BrowserRouter>
-    </ErrorBoundary>
+    <AuthProvider>
+      <ErrorBoundary>
+        <BrowserRouter>
+          <AppLayout />
+        </BrowserRouter>
+      </ErrorBoundary>
+    </AuthProvider>
   )
 }

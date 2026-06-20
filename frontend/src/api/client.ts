@@ -11,6 +11,32 @@ const api = axios.create({
   timeout: 30000,
 })
 
+// Add auth token to every request
+api.interceptors.request.use((config) => {
+  try {
+    const stored = localStorage.getItem('vulnai_user')
+    if (stored) {
+      const user = JSON.parse(stored)
+      if (user?.access_token) {
+        config.headers.Authorization = `Bearer ${user.access_token}`
+      }
+    }
+  } catch {}
+  return config
+})
+
+// Handle 401 responses (token expired)
+api.interceptors.response.use(
+  (response) => response,
+  (error) => {
+    if (error.response?.status === 401) {
+      localStorage.removeItem('vulnai_user')
+      window.location.href = '/'
+    }
+    return Promise.reject(error)
+  }
+)
+
 export const scanApi = {
   create: (data: ScanCreateRequest) =>
     api.post<Scan>('/api/scans', data).then(r => r.data),
